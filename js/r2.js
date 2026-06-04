@@ -162,7 +162,7 @@ async function r2LoadEmpresa(valor) {
     const archivo  = _r2Index.archivos_mezclados?.find(a => a.id === valor);
     label          = archivo?.label || valor;
     urlRutas       = `mezclado/rutas/${valor}.geojson`;
-    urlImpactos    = `mezclado/impactos/${valor}.csv`;
+    urlImpactos    = `mezclado/impactos/${valor.replace('rutas_', 'impactos_')}.csv`;
     tieneImpactos  = archivo?.tiene_impactos ?? true;
   } else {
     // valor = account_id
