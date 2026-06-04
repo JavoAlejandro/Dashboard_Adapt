@@ -114,11 +114,13 @@ async function r2LoadIndex() {
       status.textContent = `${archivos.length} archivos disponibles — selecciona uno`;
 
       // Cambiar label del selector
-      const lbl = sel.previousElementSibling;
-      if (lbl && lbl.classList.contains('ctrl-lbl')) lbl.textContent = 'Archivo';
+      const lbl = document.getElementById('r2-sel-lbl');
+      if (lbl) lbl.textContent = 'Archivo';
 
     } else {
       // ── Modo empresa: listar por account_id ───────────────────────────────
+      const lbl = document.getElementById('r2-sel-lbl');
+      if (lbl) lbl.textContent = 'Empresa';
       const empresas = _r2Index.empresas || [];
       empresas.forEach(e => {
         if (!e.tiene_rutas) return;

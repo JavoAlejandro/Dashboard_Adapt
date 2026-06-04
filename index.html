@@ -89,8 +89,8 @@
 
   <!-- Fila 1: selector empresa + estado global -->
   <div class="gps-topbar">
-    <!-- Selector de empresa desde R2 -->
-    <span class="ctrl-lbl">Empresa</span>
+    <!-- Selector desde R2 -->
+    <span class="ctrl-lbl" id="r2-sel-lbl">Archivo</span>
     <select class="gps-select" id="r2-empresa-sel" onchange="r2LoadEmpresa(this.value)" style="min-width:180px">
       <option value="">Cargando empresas…</option>
     </select>
@@ -233,10 +233,7 @@
   <div id="map-gps-empty" class="gps-map-empty">
     <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="3"/><path d="M12 2a10 10 0 00-7 17l7 3 7-3A10 10 0 0012 2z"/></svg>
     <p>Recorridos individuales de camiones</p>
-    <ol style="font-size:11px;color:var(--ink2);line-height:2.2;padding-left:18px;margin-top:4px">
-      <li>Corre <code style="font-family:'Syne Mono',monospace;background:var(--bg);padding:1px 6px;border-radius:2px">python procesar_gps.py</code></li>
-      <li>Haz clic en <strong>Cargar GeoJSON</strong> arriba</li>
-    </ol>
+    <span style="font-size:11px;color:var(--ink2)">Selecciona un archivo en el selector de arriba para visualizar las rutas</span>
   </div>
 
   <!-- Fila principal: stats (izquierda 1/3) + mapa (derecha 2/3) -->
@@ -632,23 +629,24 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 
 <!-- ══════════════════════════════════════════════════════════════════ -->
-<!-- CONFIGURACIÓN R2 — editar solo esta URL                           -->
+<!-- CONFIGURACIÓN R2 — editar solo esta línea antes de publicar       -->
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <script>
-  // ⚠️ REEMPLAZA esta URL con la URL pública de tu bucket R2
-  const R2_BASE = https://adapt-proxy.adapt-transportation.workers.dev/;
+  // ⚠️ Reemplaza con la URL de tu Cloudflare Worker (no la URL de R2 directamente)
+  // Ejemplo: 'https://adapt-proxy.tusubdominio.workers.dev'
+  const R2_BASE = 'https://adapt-proxy.adapt-transportation.workers.dev/';
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <!-- MÓDULOS JS DE LA APLICACIÓN                                        -->
-<!--   Orden de carga importante: impactos → gps → animation → init    -->
+<!--   Orden importante: R2_BASE debe estar definido antes de r2.js    -->
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <script src="js/r2.js"></script>
 <script src="js/gps.js"></script>
 <script src="js/animation.js"></script>
 <script src="js/comparativas.js"></script>
-  <script src="js/temporal.js"></script>
-  <script src="js/h3overlay.js"></script>
+<script src="js/temporal.js"></script>
+<script src="js/h3overlay.js"></script>
 <script src="js/init.js"></script>
 
 </body>
