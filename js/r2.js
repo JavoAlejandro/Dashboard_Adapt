@@ -155,14 +155,16 @@ async function r2LoadEmpresa(valor) {
 
   h3Status.textContent = '';
 
-  let urlRutas, urlImpactos, label, tieneImpactos;
+  let urlRutas, urlImpactos, urlH3, label, tieneImpactos;
 
   if (_r2Modo === 'mezclado') {
-    // valor = "rutas_1"
+    // valor = "rutas_10" → número = "10"
+    const num      = valor.replace('rutas_', '');
     const archivo  = _r2Index.archivos_mezclados?.find(a => a.id === valor);
     label          = archivo?.label || valor;
     urlRutas       = `mezclado/rutas/${valor}.geojson`;
-    urlImpactos    = `mezclado/impactos/${valor.replace('rutas_', 'impactos_')}.csv`;
+    urlImpactos    = `mezclado/impactos/impactos_${num}.csv`;
+    urlH3          = `mezclado/h3/impactos_h3_${num}.csv`;
     tieneImpactos  = archivo?.tiene_impactos ?? true;
   } else {
     // valor = account_id
@@ -170,14 +172,16 @@ async function r2LoadEmpresa(valor) {
     label          = `empresa ${valor}`;
     urlRutas       = `rutas/empresa_${valor}.geojson`;
     urlImpactos    = `impactos/empresa_${valor}.csv`;
+    urlH3          = `h3/empresa_${valor}.csv`;
     tieneImpactos  = empInfo?.tiene_impactos ?? false;
   }
 
   status.textContent = `⏳ Cargando ${label}…`;
 
-  const [rutasRes, impactosRes] = await Promise.allSettled([
+  const [rutasRes, impactosRes, h3Res] = await Promise.allSettled([
     r2Fetch(urlRutas),
     tieneImpactos ? r2Fetch(urlImpactos) : Promise.reject('sin impactos'),
+    tieneImpactos ? r2Fetch(urlH3)       : Promise.reject('sin h3'),
   ]);
 
   // ── GeoJSON ───────────────────────────────────────────────────────────────
@@ -210,6 +214,38 @@ async function r2LoadEmpresa(valor) {
     }
   } else {
     if (tempStatus) tempStatus.textContent = `Sin datos de impactos para ${label}`;
+  }
+
+  // ── CSV H3 ────────────────────────────────────────────────────────────────
+  if (h3Res.status === 'fulfilled') {
+    try {
+      const csvText = await h3Res.value.text();
+      Papa.parse(csvText, {
+        header: true, dynamicTyping: true, skipEmptyLines: true,
+        complete({ data: rows }) {
+          const required = ['h3_9', 'owner_id', 'total_ph_hex'];
+          const cols     = Object.keys(rows[0] || {});
+          const missing  = required.filter(c => !cols.includes(c));
+          if (missing.length) {
+            h3Status.textContent = `✗ H3: columnas faltantes: ${missing.join(', ')}`;
+            return;
+          }
+          _h3Data = rows.filter(r => r.h3_9 && r.total_ph_hex != null);
+          const nHex   = new Set(_h3Data.map(r => r.h3_9)).size;
+          const nRutas = new Set(_h3Data.map(r => `${r.owner_id}_${r.dia}_${r.mes}`)).size;
+          h3Status.textContent =
+            `✓ H3: ${_h3Data.length.toLocaleString()} registros · ${nHex.toLocaleString()} hexágonos · ${nRutas.toLocaleString()} rutas`;
+          // Re-dibujar si el toggle está activo
+          if (document.getElementById('h3-overlay-toggle')?.checked) {
+            drawH3Overlay();
+          }
+        },
+      });
+    } catch (err) {
+      console.error('[R2] Error cargando H3:', err);
+    }
+  } else {
+    h3Status.textContent = '';   // silencioso si no hay H3
   }
 }
 
