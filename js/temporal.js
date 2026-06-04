@@ -1,0 +1,337 @@
+'use strict';
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TEMPORAL PANEL
+// Analiza el CSV de impactos (output de calcular_impactos.py) y muestra:
+//   - KPIs globales
+//   - Evolución por mes / día de semana / hora de salida (líneas por empresa)
+//   - Distribución por día de semana (barras)
+//   - Distribución por hora de salida (barras)
+//   - Tabla resumen por empresa
+//
+// Formato esperado del CSV:
+//   owner_id, account_id, dia, mes, dia_semana, hora_salida, horas_operacion,
+//   gse_ab_personas, ..., gse_ab_ph, ..., total_personas, total_ph, pct_cobertura
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _tempData    = [];        // raw rows from CSV
+let _tempCharts  = {};        // Chart.js instances keyed by canvas id
+let _tempEmpConf = [];        // [{account_id, color}]
+
+// Ordered labels
+const DIAS_ORDER = ['Lunes','Martes','Miercoles','Jueves','Viernes','Sabado','Domingo'];
+const MESES_LBL  = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+// Color palette for companies (cycles if > 10)
+const EMP_COLORS = [
+  '#f5a623','#4af0a0','#7c3aed','#2563eb','#e11d48',
+  '#0891b2','#16a34a','#f97316','#a855f7','#84cc16',
+];
+
+// ── LOAD CSV ─────────────────────────────────────────────────────────────────
+function tempLoadCSV(ev) {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('temp-csv-status');
+  statusEl.textContent = '⏳ Procesando…';
+
+  Papa.parse(file, {
+    header: true,
+    dynamicTyping: true,
+    skipEmptyLines: true,
+    complete({ data: rows }) {
+      // Validate required columns
+      const required = ['owner_id', 'mes', 'total_ph'];
+      const cols = Object.keys(rows[0] || {});
+      const missing = required.filter(c => !cols.includes(c));
+      if (missing.length) {
+        statusEl.textContent = `✗ Columnas faltantes: ${missing.join(', ')}`;
+        return;
+      }
+
+      _tempData = rows.filter(r => r.owner_id != null && r.mes != null);
+
+      const n       = _tempData.length;
+      const nOwners = new Set(_tempData.map(r => r.owner_id)).size;
+      const nEmps   = new Set(_tempData.map(r => r.account_id).filter(Boolean)).size;
+      statusEl.textContent = `✓ ${n.toLocaleString()} registros · ${nOwners} camiones · ${nEmps} empresas`;
+
+      // Build empresa config
+      const emps = [...new Set(_tempData.map(r => String(r.account_id ?? r.owner_id)))].sort();
+      _tempEmpConf = emps.map((id, i) => ({ id, color: EMP_COLORS[i % EMP_COLORS.length] }));
+
+      // Populate empresa selector
+      const sel = document.getElementById('temp-empresa-sel');
+      sel.innerHTML = '<option value="all">Todas las empresas</option>';
+      emps.forEach(id => {
+        const o = document.createElement('option');
+        o.value = id; o.textContent = id; sel.appendChild(o);
+      });
+
+      document.getElementById('temp-filters').style.display = 'flex';
+      tempApplyFilters();
+    },
+    error(e) {
+      statusEl.textContent = '✗ Error al leer CSV: ' + e.message;
+    }
+  });
+}
+
+// ── FILTERS ──────────────────────────────────────────────────────────────────
+function tempApplyFilters() {
+  const empresa  = document.getElementById('temp-empresa-sel').value;
+  const metrica  = document.getElementById('temp-metrica-sel').value;
+  const dim      = document.getElementById('temp-dim-sel').value;
+
+  const filtered = empresa === 'all'
+    ? _tempData
+    : _tempData.filter(r => String(r.account_id ?? r.owner_id) === empresa);
+
+  if (!filtered.length) return;
+
+  document.getElementById('temp-empty').style.display   = 'none';
+  document.getElementById('temp-content').style.display = 'block';
+
+  _renderKPIs(filtered, metrica);
+  _renderEvolChart(filtered, metrica, dim);
+  _renderDiaSemChart(filtered, metrica);
+  _renderHoraChart(filtered, metrica);
+  _renderTabla(filtered, metrica);
+}
+
+// ── KPIs ─────────────────────────────────────────────────────────────────────
+function _renderKPIs(rows, metrica) {
+  const vals = rows.map(r => +r[metrica] || 0).filter(v => v > 0);
+  if (!vals.length) return;
+
+  const mean   = vals.reduce((a,b) => a+b, 0) / vals.length;
+  const max    = Math.max(...vals);
+  const nMeses = new Set(rows.map(r => r.mes)).size;
+  const cobPct = rows.length
+    ? (rows.filter(r => (r.pct_cobertura || 0) > 0).length / rows.length * 100) : 0;
+
+  const kpis = [
+    { val: mean.toFixed(1), lbl: 'Promedio p/h·día',     sub: metrica },
+    { val: max.toFixed(1),  lbl: 'Máximo p/h·día',       sub: 'pico histórico' },
+    { val: nMeses,          lbl: 'Meses con datos',       sub: `${rows.length.toLocaleString()} registros` },
+    { val: cobPct.toFixed(0) + '%', lbl: 'Cobertura socio', sub: 'pings con datos H3' },
+  ];
+
+  const container = document.getElementById('temp-kpi-row');
+  container.innerHTML = '';
+  kpis.forEach(k => {
+    const el = document.createElement('div');
+    el.className = 'temp-kpi';
+    el.innerHTML = `<div class="temp-kpi-val">${k.val}</div>
+      <div class="temp-kpi-lbl">${k.lbl}</div>
+      <div class="temp-kpi-sub">${k.sub}</div>`;
+    container.appendChild(el);
+  });
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function _avgBy(rows, groupFn, metrica) {
+  const groups = {};
+  rows.forEach(r => {
+    const k = groupFn(r);
+    if (k == null) return;
+    if (!groups[k]) groups[k] = [];
+    const v = +r[metrica];
+    if (!isNaN(v) && v > 0) groups[k].push(v);
+  });
+  const result = {};
+  for (const [k, vals] of Object.entries(groups)) {
+    result[k] = vals.length ? vals.reduce((a,b) => a+b,0) / vals.length : 0;
+  }
+  return result;
+}
+
+function _destroyChart(id) {
+  if (_tempCharts[id]) { _tempCharts[id].destroy(); delete _tempCharts[id]; }
+}
+
+function _chartDefaults() {
+  return {
+    responsive: true,
+    plugins: {
+      legend: { labels: { font: { family: 'Syne Mono', size: 10 }, color: '#6b6760', boxWidth: 12 } },
+      tooltip: { callbacks: { label: c => ' ' + (c.parsed.y ?? c.parsed).toFixed(1) + ' p/h' } }
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { family: 'Syne Mono', size: 9 }, color: '#8a867e' } },
+      y: { grid: { color: '#ece8e0' }, ticks: { font: { family: 'Syne Mono', size: 9 }, color: '#8a867e' } }
+    }
+  };
+}
+
+// ── CHART 1: Evolución principal ──────────────────────────────────────────────
+function _renderEvolChart(rows, metrica, dim) {
+  _destroyChart('temp-chart-evol');
+
+  const empresa = document.getElementById('temp-empresa-sel').value;
+
+  // Labels depend on dimension
+  let labels, groupFn;
+  if (dim === 'mes') {
+    const meses = [...new Set(rows.map(r => +r.mes))].sort((a,b) => a-b);
+    labels  = meses.map(m => MESES_LBL[m] || m);
+    groupFn = r => +r.mes;
+  } else if (dim === 'dia_semana') {
+    labels  = DIAS_ORDER;
+    groupFn = r => r.dia_semana;
+  } else {
+    const horas = [...new Set(rows.map(r => +r.hora_salida).filter(h => !isNaN(h)))].sort((a,b)=>a-b);
+    labels  = horas.map(h => `${String(h).padStart(2,'0')}:00`);
+    groupFn = r => +r.hora_salida;
+  }
+
+  // One dataset per empresa (or single if filtered)
+  const empsToShow = empresa === 'all'
+    ? _tempEmpConf
+    : _tempEmpConf.filter(e => e.id === empresa);
+
+  const datasets = empsToShow.map(emp => {
+    const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
+    const byDim   = _avgBy(empRows, groupFn, metrica);
+
+    const data = dim === 'mes'
+      ? [...new Set(rows.map(r => +r.mes))].sort((a,b)=>a-b).map(m => byDim[m] ?? null)
+      : dim === 'dia_semana'
+        ? DIAS_ORDER.map(d => byDim[d] ?? null)
+        : [...new Set(rows.map(r => +r.hora_salida).filter(h => !isNaN(h)))].sort((a,b)=>a-b).map(h => byDim[h] ?? null);
+
+    return {
+      label:       emp.id,
+      data,
+      borderColor: emp.color,
+      backgroundColor: emp.color + '22',
+      borderWidth: 2.5,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      tension: 0.3,
+      fill: empsToShow.length === 1,
+      spanGaps: true,
+    };
+  });
+
+  const dimLabels = { mes: 'mes', dia_semana: 'día de semana', hora_salida: 'hora de salida' };
+  document.getElementById('temp-chart1-title').textContent =
+    `Evolución por ${dimLabels[dim]}`;
+  document.getElementById('temp-chart1-sub').textContent =
+    `${metrica} — promedio por ${dimLabels[dim]}`;
+
+  const ctx = document.getElementById('temp-chart-evol').getContext('2d');
+  _tempCharts['temp-chart-evol'] = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: { ..._chartDefaults(), interaction: { mode: 'index', intersect: false } }
+  });
+}
+
+// ── CHART 2: Por día de semana ────────────────────────────────────────────────
+function _renderDiaSemChart(rows, metrica) {
+  _destroyChart('temp-chart-diasem');
+
+  const empresa = document.getElementById('temp-empresa-sel').value;
+  const empsToShow = empresa === 'all'
+    ? _tempEmpConf
+    : _tempEmpConf.filter(e => e.id === empresa);
+
+  const datasets = empsToShow.map(emp => {
+    const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
+    const byDay   = _avgBy(empRows, r => r.dia_semana, metrica);
+    return {
+      label: emp.id,
+      data:  DIAS_ORDER.map(d => byDay[d] ?? 0),
+      backgroundColor: emp.color + 'cc',
+      borderRadius: 3,
+    };
+  });
+
+  const ctx = document.getElementById('temp-chart-diasem').getContext('2d');
+  _tempCharts['temp-chart-diasem'] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: DIAS_ORDER.map(d => d.slice(0,3)), datasets },
+    options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: empsToShow.length > 1, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
+  });
+}
+
+// ── CHART 3: Por hora de salida ───────────────────────────────────────────────
+function _renderHoraChart(rows, metrica) {
+  _destroyChart('temp-chart-hora');
+
+  const empresa = document.getElementById('temp-empresa-sel').value;
+  const empsToShow = empresa === 'all'
+    ? _tempEmpConf
+    : _tempEmpConf.filter(e => e.id === empresa);
+
+  const horas = [...new Set(rows.map(r => +r.hora_salida).filter(h => !isNaN(h) && h >= 0))].sort((a,b)=>a-b);
+  const horaLabels = horas.map(h => `${String(h).padStart(2,'0')}h`);
+
+  const datasets = empsToShow.map(emp => {
+    const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
+    const byHora  = _avgBy(empRows, r => +r.hora_salida, metrica);
+    return {
+      label: emp.id,
+      data:  horas.map(h => byHora[h] ?? 0),
+      backgroundColor: emp.color + 'cc',
+      borderRadius: 3,
+    };
+  });
+
+  const ctx = document.getElementById('temp-chart-hora').getContext('2d');
+  _tempCharts['temp-chart-hora'] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: horaLabels, datasets },
+    options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: empsToShow.length > 1, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
+  });
+}
+
+// ── TABLA RESUMEN ─────────────────────────────────────────────────────────────
+function _renderTabla(rows, metrica) {
+  const container = document.getElementById('temp-tabla');
+
+  // Aggregate per empresa
+  const byEmp = {};
+  rows.forEach(r => {
+    const id = String(r.account_id ?? r.owner_id ?? '—');
+    if (!byEmp[id]) byEmp[id] = { vals: [], cobertura: [], horas: [], meses: new Set() };
+    const v = +r[metrica];
+    if (!isNaN(v) && v > 0) byEmp[id].vals.push(v);
+    byEmp[id].cobertura.push(+(r.pct_cobertura || 0));
+    byEmp[id].horas.push(+(r.horas_operacion || 0));
+    if (r.mes) byEmp[id].meses.add(+r.mes);
+  });
+
+  const avg  = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
+  const fmtN = v => v >= 1000 ? (v/1000).toFixed(1)+'k' : v.toFixed(1);
+
+  let html = `<table class="temp-table">
+    <thead><tr>
+      <th>Empresa</th>
+      <th>Promedio ${metrica}</th>
+      <th>Máximo</th>
+      <th>Meses</th>
+      <th>Cobertura socio</th>
+      <th>Horas op. prom.</th>
+    </tr></thead><tbody>`;
+
+  const sorted = Object.entries(byEmp).sort((a,b) => avg(b[1].vals) - avg(a[1].vals));
+  sorted.forEach(([id, d]) => {
+    const empColor = (_tempEmpConf.find(e => e.id === id) || {}).color || 'var(--accent)';
+    const avgVal   = avg(d.vals);
+    const maxVal   = d.vals.length ? Math.max(...d.vals) : 0;
+    const cobPct   = avg(d.cobertura) * 100;
+    const horasProm = avg(d.horas);
+    html += `<tr>
+      <td><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${empColor};margin-right:6px"></span>${id}</td>
+      <td class="td-num td-accent">${fmtN(avgVal)}</td>
+      <td class="td-num">${fmtN(maxVal)}</td>
+      <td class="td-num">${d.meses.size}</td>
+      <td class="td-num">${cobPct.toFixed(0)}%</td>
+      <td class="td-num">${horasProm.toFixed(1)}h</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}

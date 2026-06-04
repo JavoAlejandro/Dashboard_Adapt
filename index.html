@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ADAPT — AI-powered Decision Support for Transportation</title>
+
+<!-- ── Tipografías ── -->
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Epilogue:wght@300;400;500&family=Syne+Mono&display=swap" rel="stylesheet">
+
+<!-- ── Leaflet CSS ── -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<!-- ── Estilos propios ── -->
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- HEADER                                                             -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<header>
+  <div class="brand">
+    <h1><em>ADAPT</em></h1>
+    <p>AI-powered Decision Support for Assessing People-centered Transportation Externalities</p>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- NAVEGACIÓN PRINCIPAL                                               -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div class="main-tabs">
+  <button class="main-tab active" onclick="switchTab('gps',this)">
+    <svg viewBox="0 0 20 14" fill="none" stroke="currentColor" stroke-width="1.4" style="width:16px;height:12px;flex-shrink:0">
+      <rect x="1" y="4" width="12" height="7" rx="1.5"/>
+      <path d="M13 7h4l2 4H13V7z"/>
+      <circle cx="4.5" cy="12" r="1.8" fill="currentColor" stroke="none"/>
+      <circle cx="14.5" cy="12" r="1.8" fill="currentColor" stroke="none"/>
+    </svg>
+    Camión
+  </button>
+  <button class="main-tab secondary" onclick="switchTab('comparativas',this)">
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" style="width:14px;height:14px;flex-shrink:0">
+      <rect x="1" y="6" width="7" height="11" rx="1"/>
+      <rect x="10" y="1" width="7" height="16" rx="1"/>
+      <path d="M4 6V4a2 2 0 014 0v2"/>
+    </svg>
+    Empresa
+  </button>
+
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- TAB: RECORRIDOS GPS                                               -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div id="tab-gps" class="tab-panel active">
+<!-- Sub-pestañas de Camión -->
+<div class="sub-tabs" id="sub-tabs-camion">
+  <button class="sub-tab active" onclick="switchSubTab('exposicion', this)">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="width:12px;height:12px">
+      <circle cx="8" cy="8" r="5"/><path d="M8 3v5l3 3"/>
+    </svg>
+    Exposición
+  </button>
+  <button class="sub-tab" onclick="switchSubTab('emision', this)">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="width:12px;height:12px">
+      <path d="M2 12c2-4 4-6 6-6s4 2 6 6"/><path d="M5 9c1-2 2-3 3-3s2 1 3 3"/>
+    </svg>
+    Emisión
+  </button>
+  <button class="sub-tab" onclick="switchSubTab('congestion', this)">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="width:12px;height:12px">
+      <rect x="1" y="6" width="4" height="4" rx="0.5"/><rect x="6" y="4" width="4" height="6" rx="0.5"/><rect x="11" y="5" width="4" height="5" rx="0.5"/>
+    </svg>
+    Congestión
+  </button>
+  <button class="sub-tab" onclick="switchSubTab('ruido', this)">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="width:12px;height:12px">
+      <path d="M6 5v6"/><path d="M9 3v10"/><path d="M3 7v2"/><path d="M12 6v4"/>
+    </svg>
+    Ruido
+  </button>
+</div>
+
+<!-- Sub-panel: Exposición (todo el contenido actual) -->
+<div id="sub-tab-exposicion" class="sub-tab-panel active">
+<div class="gps-section">
+
+  <!-- Fila 1: selector empresa + estado global -->
+  <div class="gps-topbar">
+    <!-- Selector de empresa desde R2 -->
+    <span class="ctrl-lbl">Empresa</span>
+    <select class="gps-select" id="r2-empresa-sel" onchange="r2LoadEmpresa(this.value)" style="min-width:180px">
+      <option value="">Cargando empresas…</option>
+    </select>
+    <span class="gps-status" id="gps-status">Selecciona una empresa para cargar sus rutas</span>
+    <span class="gps-status" id="stats-csv-status" style="color:var(--alt);display:none"></span>
+    <span id="h3-csv-status" class="gps-status"></span>
+    <input type="checkbox" id="h3-overlay-toggle" style="display:none">
+    <button id="h3-toggle-btn" class="upload-btn" onclick="h3ToggleBtn()"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--ink2);transition:background 0.15s,color 0.15s">
+      ⬡ Hexágonos
+    </button>
+    <div class="gps-filters" id="gps-filters" style="display:none">
+      <span class="ctrl-lbl" style="display:none">Tipo</span>
+      <select class="gps-select" id="gps-tipo-sel" onchange="filterBuses()" style="display:none">
+        <option value="all">Todos</option>
+        <option value="corriente">Corriente</option>
+        <option value="alternativa">Alternativa</option>
+      </select>
+      <span class="ctrl-lbl" id="gps-empresa-lbl">Empresa</span>
+      <select class="gps-select" id="gps-empresa-sel" onchange="onEmpresaChange()" style="min-width:160px">
+        <option value="all">Todas las empresas</option>
+      </select>
+      <span class="ctrl-lbl" id="gps-bus-lbl">Camión</span>
+      <select class="gps-select" id="gps-bus-sel" onchange="onBusChange()" style="min-width:180px">
+        <option value="all">Todos los camiones</option>
+      </select>
+      <span class="ctrl-lbl" id="gps-mes-lbl">Mes</span>
+      <select class="gps-select" id="gps-mes-sel" onchange="onMesChange()" style="min-width:120px">
+        <option value="all">Todos los meses</option>
+      </select>
+      <span class="ctrl-lbl" id="gps-dia-lbl">Día</span>
+      <select class="gps-select" id="gps-dia-sel" onchange="onDiaChange()" style="min-width:90px">
+        <option value="all">Todos los días</option>
+      </select>
+      <span class="ctrl-lbl" id="gps-viaje-lbl" style="display:none">Viaje</span>
+      <select class="gps-select" id="gps-viaje-sel" onchange="onViajeChange()" style="min-width:110px;display:none">
+        <option value="all">Todos los viajes</option>
+      </select>
+      <button class="gbtn" onclick="resetFilters()" id="btn-reset-filters" style="display:none">✕ Limpiar</button>
+      <button class="gbtn" onclick="fitAllBuses()">↔ Encuadrar todo</button>
+    </div>
+  </div>
+
+  <!-- Fila 2: paneles hover -->
+  <div class="gps-hover-panels-row" id="gps-hover-row" style="display:none">
+
+    <!-- Panel: Filtrar por vía -->
+    <div class="hover-panel-wrap">
+      <button class="hover-panel-trigger">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg>
+        Filtrar por vía
+        <svg viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" style="width:9px;height:9px;margin-left:4px"><path d="M1 1l4 4 4-4"/></svg>
+      </button>
+      <div class="hover-panel-dropdown">
+        <div class="via-filter-inner">
+          <div class="via-input-wrap">
+            <input type="text" id="via-input" class="gps-text-input"
+              placeholder="ej. Av. Argentina" autocomplete="off"
+              oninput="onViaInput()" onkeydown="onViaKeydown(event)"
+              style="width:260px">
+            <div class="via-suggestions" id="via-suggestions" style="display:none"></div>
+          </div>
+          <button class="upload-btn" style="height:34px;padding:0 16px" onclick="applyViaFilter()">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg>
+            Filtrar
+          </button>
+          <button class="gbtn" id="via-clear-btn" onclick="clearViaFilter()" style="display:none">✕ Limpiar vía</button>
+          <span class="via-status" id="via-status"></span>
+          <button class="gbtn" id="btn-random-route" onclick="pickRandomRoute()" style="display:none;border-color:var(--accent);color:var(--accent)">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px;margin-right:4px"><path d="M1 5h10M1 5l3-3M1 5l3 3M15 11H5M15 11l-3-3M15 11l-3 3"/></svg>
+            Camión vía aleatoria
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel: Buscar ruta -->
+    <div class="hover-panel-wrap" id="gps-search-bar">
+      <button class="hover-panel-trigger">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg>
+        Buscar camión vía (ruta)
+        <svg viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" style="width:9px;height:9px;margin-left:4px"><path d="M1 1l4 4 4-4"/></svg>
+      </button>
+      <div class="hover-panel-dropdown">
+        <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px">
+          <span style="font-family:'Syne',sans-serif;font-weight:700;font-size:13px">Buscar camión vía (ruta)</span>
+          <span class="ctrl-lbl" style="font-size:9px">Por camión + día</span>
+        </div>
+        <div class="gps-search-inputs">
+          <div class="gps-input-wrap">
+            <label class="gps-input-lbl">ID Camión</label>
+            <input type="text" id="srch-bus" class="gps-text-input" placeholder="ej. 902" oninput="onSearchInput()" autocomplete="off">
+          </div>
+          <div class="gps-input-wrap">
+            <label class="gps-input-lbl">Día</label>
+            <input type="text" id="srch-dia" class="gps-text-input" placeholder="ej. 3" oninput="onSearchInput()" autocomplete="off" style="width:80px">
+          </div>
+          <div class="gps-input-wrap" id="srch-mes-wrap" style="display:none">
+            <label class="gps-input-lbl">Mes</label>
+            <input type="text" id="srch-mes" class="gps-text-input" placeholder="ej. 7" oninput="onSearchInput()" autocomplete="off" style="width:72px">
+          </div>
+          <button class="upload-btn" style="height:38px;padding:0 18px;align-self:flex-end" onclick="searchRoute()">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:12px;height:12px"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg>
+            Buscar
+          </button>
+          <button class="gbtn" onclick="clearSearch()" id="srch-clear" style="display:none;align-self:flex-end">✕ Limpiar</button>
+        </div>
+        <div id="srch-notif" class="srch-notif" style="display:none"></div>
+      </div>
+    </div>
+
+  </div><!-- end gps-hover-panels-row -->
+
+  <div class="gps-stats-row" id="gps-stats-row" style="display:none">
+    <div class="gps-stat"><div class="gsv" id="gs-total">—</div><div class="gsl" id="gs-total-lbl">Camiones día (rutas) totales</div></div>
+    <div class="gps-stat"><div class="gsv" id="gs-empresas">—</div><div class="gsl" id="gs-empresas-lbl">Empresas</div></div>
+    <div class="gps-stat"><div class="gsv" id="gs-buses-empresa">—</div><div class="gsl" id="gs-buses-empresa-lbl">Camiones únicos</div></div>
+    <div class="gps-stat gps-stat--fixed" id="gs-cell-avg-empresa"><div class="gsv" id="gs-avg-empresa">—</div><div class="gsl">Camiones día (rutas) · promedio por empresa</div></div>
+    <div class="gps-stat gps-stat--fixed" id="gs-cell-pings"><div class="gsv" id="gs-pings">—</div><div class="gsl">Puntos GPS totales</div></div>
+    <div class="gps-stat gps-stat--fixed" id="gs-cell-avg-camion" style="display:none"><div class="gsv" id="gs-avg-camion">—</div><div class="gsl" id="gs-avg-camion-lbl">Camiones día · promedio por camión</div></div>
+  </div>
+
+  <!-- ══ ESTIMADORES POBLACIONALES ══ -->
+  <div id="estimadores-panel" style="display:none;margin-bottom:16px">
+    <div class="estimadores-header">
+      <span class="estimadores-title">Estimadores poblacionales</span>
+      <span class="estimadores-sub" id="estimadores-sub">Distribución porcentual promedio · todas las camiones día (rutas) con datos CSV</span>
+      <button class="gbtn" onclick="toggleEstimadores()" id="btn-estimadores-toggle" style="margin-left:auto;font-size:9px">▼ Ver</button>
+    </div>
+    <div id="estimadores-body" style="display:none;margin-top:12px">
+      <div class="est-grid" id="est-grid-gse">
+        <div class="est-section-lbl">Nivel socioeconómico</div>
+      </div>
+      <div class="est-grid" id="est-grid-edad" style="margin-top:10px">
+        <div class="est-section-lbl">Rango etario</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="map-gps-empty" class="gps-map-empty">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="12" cy="12" r="3"/><path d="M12 2a10 10 0 00-7 17l7 3 7-3A10 10 0 0012 2z"/></svg>
+    <p>Recorridos individuales de camiones</p>
+    <ol style="font-size:11px;color:var(--ink2);line-height:2.2;padding-left:18px;margin-top:4px">
+      <li>Corre <code style="font-family:'Syne Mono',monospace;background:var(--bg);padding:1px 6px;border-radius:2px">python procesar_gps.py</code></li>
+      <li>Haz clic en <strong>Cargar GeoJSON</strong> arriba</li>
+    </ol>
+  </div>
+
+  <!-- Fila principal: stats (izquierda 1/3) + mapa (derecha 2/3) -->
+  <div class="gps-main-row">
+
+    <!-- PANEL IZQUIERDO: estadísticas compactas por segmento -->
+    <div class="gps-side-stats" id="gps-side-stats" style="display:none">
+      <div class="gss-header">
+        <!-- Personas por hora: protagonista visual -->
+        <div class="bsp-totals" id="bsp-totals" style="display:none">
+          <div class="bsp-total-row">
+            <span class="bsp-total-val" id="bsp-total-edad">—</span>
+          </div>
+          <div class="bsp-total-lbl" id="bsp-total-sub" style="margin-top:2px"></div>
+        </div>
+        <!-- Identidad del camión vía: subordinada -->
+        <div class="bsp-identity" id="bsp-identity" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+          <span class="bsp-title" id="bsp-title">Camión — · Día —</span>
+          <span class="bsp-sub" id="bsp-sub"></span>
+        </div>
+      </div>
+      <div class="gss-cards" id="bsp-cards"></div>
+      <!-- Vías recorridas -->
+      <div class="gss-vias" id="gss-vias" style="display:none">
+        <div class="gss-vias-title">Vías recorridas</div>
+        <ol class="gss-vias-list" id="gss-vias-list"></ol>
+      </div>
+    </div>
+
+    <!-- PANEL DERECHO: mapa + barra de animación -->
+    <div class="gps-map-col">
+      <!-- Selector de coordenadas — siempre accesible sobre el mapa -->
+      <div class="coord-bar" id="coord-bar" style="display:none">
+        <button class="gbtn coord-toggle" id="btn-coord" onclick="toggleCoordPicker()"
+          title="Activar/desactivar inspección de coordenadas">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px;margin-right:5px"><circle cx="8" cy="8" r="3"/><line x1="8" y1="1" x2="8" y2="4"/><line x1="8" y1="12" x2="8" y2="15"/><line x1="1" y1="8" x2="4" y2="8"/><line x1="12" y1="8" x2="15" y2="8"/></svg>
+          Coordenadas
+        </button>
+        <span class="coord-display" id="coord-display">Haz clic en el mapa</span>
+        <button class="gbtn" id="coord-copy" onclick="copyCoords()" style="display:none">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:10px;height:10px"><rect x="4" y="4" width="9" height="9" rx="1"/><path d="M3 10V3h7"/></svg>
+          Copiar
+        </button>
+      </div>
+      <div class="map-gps-wrap" id="map-gps-wrap" style="position:relative;display:none">
+        <!-- Vía activa — overlay sobre el mapa -->
+        <div class="via-indicator" id="via-indicator" style="display:none">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+            style="width:13px;height:13px;flex-shrink:0">
+            <path d="M8 2C5.2 2 3 4.2 3 7c0 4 5 9 5 9s5-5 5-9c0-2.8-2.2-5-5-5z"/>
+            <circle cx="8" cy="7" r="1.5" fill="currentColor" stroke="none"/>
+          </svg>
+          <span class="via-indicator-name" id="via-indicator-name">—</span>
+          <span class="via-indicator-idx" id="via-indicator-idx"></span>
+        </div>
+        <div style="position:relative">
+          <div id="map-gps" style="height:560px;border:1px solid var(--border);border-radius:4px 4px 0 0"></div>
+          <div class="impact-legend" id="impact-legend">
+            <span class="impact-legend-title">Impacto personas/hora</span>
+            <div class="impact-legend-bar"></div>
+            <div class="impact-legend-labels"><span>Bajo</span><span>Alto</span></div>
+          </div>
+        </div>
+      </div>
+      <div id="anim-bar" class="anim-bar" style="display:none">
+        <button class="anim-btn" id="anim-play" onclick="animPlay()" title="Animar camión vía (ruta)">
+          <svg id="anim-icon-play" viewBox="0 0 16 16" fill="currentColor"><polygon points="4,2 14,8 4,14"/></svg>
+          <svg id="anim-icon-pause" viewBox="0 0 16 16" fill="currentColor" style="display:none"><rect x="3" y="2" width="3.5" height="12"/><rect x="9.5" y="2" width="3.5" height="12"/></svg>
+        </button>
+        <button class="anim-btn" onclick="animReset()" title="Reiniciar">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8a6 6 0 106-6H4M4 2v4H8"/></svg>
+        </button>
+        <div class="anim-track-wrap">
+          <div class="anim-track" id="anim-track">
+            <div class="anim-fill" id="anim-fill"></div>
+            <div class="anim-thumb" id="anim-thumb"></div>
+          </div>
+        </div>
+        <span class="anim-label" id="anim-label">0%</span>
+        <div class="anim-speed-wrap">
+          <span class="ctrl-lbl">Velocidad</span>
+          <select class="gps-select" id="anim-speed" style="min-width:80px;padding:4px 24px 4px 8px">
+            <option value="0.3">Lenta</option>
+            <option value="1" selected>Normal</option>
+            <option value="2.5">Rápida</option>
+            <option value="6">Muy rápida</option>
+          </select>
+        </div>
+        <span class="anim-note" id="anim-note">Selecciona un camión para animar</span>
+        <button class="gbtn" id="btn-stays" onclick="toggleStays()"
+          style="display:none;margin-left:auto;border-color:#f59e0b;color:#f59e0b">
+          <svg viewBox="0 0 16 16" fill="currentColor" style="width:10px;height:10px;margin-right:4px"><circle cx="8" cy="8" r="4"/></svg>
+          Stays
+        </button>
+      </div>
+    </div>
+
+  </div><!-- end gps-main-row -->
+
+  <div class="bus-legend" id="bus-legend" style="display:none">
+    <span class="bus-legend-title">Camiones visibles</span>
+    <div id="bus-chips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+  </div>
+
+  <!-- Gráfico de barras — ancho completo abajo -->
+  <div id="bus-stats-panel" class="bus-stats-panel" style="display:none">
+    <div class="bsp-chart-wrap">
+      <canvas id="chart-bus-stats" height="90"></canvas>
+    </div>
+  </div>
+
+  
+
+</div>
+</div><!-- end sub-tab-exposicion -->
+
+<!-- Sub-panel: Emisión -->
+<div id="sub-tab-emision" class="sub-tab-panel">
+  <div class="subtab-placeholder">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+      <path d="M2 12c2-4 4-6 6-6s4 2 6 6"/><path d="M5 9c1-2 2-3 3-3s2 1 3 3"/>
+      <path d="M3 18h18"/><path d="M8 18v-3"/><path d="M12 18v-5"/><path d="M16 18v-2"/>
+    </svg>
+    <h3>Emisión</h3>
+    <p>Por implementar…</p>
+    <span>Análisis de emisiones de CO₂ y contaminantes por ruta de camión</span>
+  </div>
+</div>
+
+<!-- Sub-panel: Congestión -->
+<div id="sub-tab-congestion" class="sub-tab-panel">
+  <div class="subtab-placeholder">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+      <rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="6" width="6" height="9" rx="1"/><rect x="17" y="7" width="6" height="7" rx="1"/>
+      <path d="M4 9V6M12 6V3M20 7V4"/>
+    </svg>
+    <h3>Congestión</h3>
+    <p>Por implementar…</p>
+    <span>Indicadores de congestión vial y tiempos de viaje por segmento</span>
+  </div>
+</div>
+
+<!-- Sub-panel: Ruido -->
+<div id="sub-tab-ruido" class="sub-tab-panel">
+  <div class="subtab-placeholder">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+      <path d="M9 5v14"/><path d="M13 2v20"/><path d="M5 9v6"/><path d="M17 7v10"/><path d="M21 9v6"/>
+    </svg>
+    <h3>Ruido</h3>
+    <p>Por implementar…</p>
+    <span>Modelado de niveles de ruido y exposición acústica por zona</span>
+  </div>
+</div>
+
+</div><!-- end tab-gps -->
+
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- TAB: COMPARATIVAS                                                  -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<div id="tab-comparativas" class="tab-panel">
+<div class="gps-section">
+
+  <!-- Sub-pestañas de Empresa -->
+  <div class="sub-tabs" id="sub-tabs-empresa">
+    <button class="sub-tab active" id="cmp-subtab-global" onclick="switchCmpSubTab('global', this)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="width:12px;height:12px"><rect x="1" y="4" width="6" height="10"/><rect x="9" y="4" width="6" height="10"/><path d="M4 4V2h8v2"/></svg>
+      Global
+    </button>
+    <button class="sub-tab" id="cmp-subtab-temporal" onclick="switchCmpSubTab('temporal', this)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="width:12px;height:12px"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 3"/></svg>
+      Temporal
+    </button>
+  </div>
+  <span class="cmp-tab-hint" id="cmp-tab-hint" style="padding:8px 20px;display:block;font-size:9px">Selecciona dos empresas para comparar su impacto promedio</span>
+
+  <!-- Sub-panel: Global -->
+  <div id="cmp-subpanel-global" class="sub-tab-panel active">
+
+  <!-- ── MODO CAMIÓN vs CAMIÓN (hidden) ── -->
+  <div id="cmp-camion-inputs" class="cmp-tab-inputs">
+    <div class="cmp-slot-tab cmp-slot-tab-a">
+      <div class="cmp-slot-head" style="color:var(--accent)">Camión A</div>
+      <div class="gps-search-inputs">
+        <div class="gps-input-wrap"><label class="gps-input-lbl">ID Camión</label>
+          <input type="text" id="cmp-bus-a" class="gps-text-input" placeholder="ej. 902" autocomplete="off"></div>
+        <div class="gps-input-wrap"><label class="gps-input-lbl">Día</label>
+          <input type="text" id="cmp-dia-a" class="gps-text-input" placeholder="ej. 3" autocomplete="off" style="width:72px"></div>
+        <div class="gps-input-wrap"><label class="gps-input-lbl">Mes</label>
+          <input type="text" id="cmp-mes-a" class="gps-text-input" placeholder="ej. 7" autocomplete="off" style="width:72px"></div>
+        <button class="upload-btn" style="height:38px;padding:0 16px;align-self:flex-end" onclick="cmpSearchA()">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg>
+          Buscar</button>
+        <span class="cmp-found-badge" id="cmp-found-a" style="display:none">✓ encontrado</span>
+      </div>
+    </div>
+
+    <div class="cmp-vs-pill">VS</div>
+
+    <div class="cmp-slot-tab cmp-slot-tab-b">
+      <div class="cmp-slot-head" style="color:var(--alt)">Camión B</div>
+      <div class="gps-search-inputs">
+        <div class="gps-input-wrap"><label class="gps-input-lbl">ID Camión</label>
+          <input type="text" id="cmp-bus-b" class="gps-text-input" placeholder="ej. 2" autocomplete="off"></div>
+        <div class="gps-input-wrap"><label class="gps-input-lbl">Día</label>
+          <input type="text" id="cmp-dia-b" class="gps-text-input" placeholder="ej. 6" autocomplete="off" style="width:72px"></div>
+        <div class="gps-input-wrap"><label class="gps-input-lbl">Mes</label>
+          <input type="text" id="cmp-mes-b" class="gps-text-input" placeholder="ej. 7" autocomplete="off" style="width:72px"></div>
+        <button class="upload-btn" style="height:38px;padding:0 16px;align-self:flex-end;background:var(--alt);border-color:var(--alt)" onclick="cmpSearchB()">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg>
+          Buscar</button>
+        <span class="cmp-found-badge" id="cmp-found-b" style="display:none;color:var(--alt)">✓ encontrado</span>
+      </div>
+    </div>
+
+    <button class="upload-btn" id="cmp-go-btn" onclick="runComparativa()" style="display:none;align-self:center;margin-left:16px">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:12px;height:12px"><path d="M2 8h12M9 4l4 4-4 4M7 12l-4-4 4-4"/></svg>
+      Comparar
+    </button>
+  </div>
+
+  <!-- ── MODO EMPRESA vs EMPRESA ── -->
+  <div id="cmp-empresa-inputs" class="cmp-tab-inputs" style="display:none">
+    <div class="cmp-slot-tab cmp-slot-tab-a">
+      <div class="cmp-slot-head" style="color:var(--accent)">Empresa A</div>
+      <select class="gps-select" id="cmp-emp-a" onchange="onCmpEmpChange()" style="min-width:200px">
+        <option value="">Seleccionar empresa</option>
+      </select>
+      <span class="cmp-found-badge" id="cmp-found-emp-a" style="display:none"></span>
+    </div>
+    <div class="cmp-vs-pill">VS</div>
+    <div class="cmp-slot-tab cmp-slot-tab-b">
+      <div class="cmp-slot-head" style="color:var(--alt)">Empresa B</div>
+      <select class="gps-select" id="cmp-emp-b" onchange="onCmpEmpChange()" style="min-width:200px">
+        <option value="">Seleccionar empresa</option>
+      </select>
+      <span class="cmp-found-badge" id="cmp-found-emp-b" style="display:none;color:var(--alt)"></span>
+    </div>
+    <button class="upload-btn" id="cmp-emp-go-btn" onclick="runComparativaEmpresas()" style="display:none;align-self:center;margin-left:16px">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:12px;height:12px"><path d="M2 8h12M9 4l4 4-4 4M7 12l-4-4 4-4"/></svg>
+      Comparar empresas
+    </button>
+  </div>
+
+  <div id="cmp-notif-tab" class="srch-notif" style="display:none"></div>
+
+  <!-- Mapa + panel de resultados -->
+  <div id="cmp-map-empty" class="gps-map-empty" style="margin-top:16px">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M2 8h12M9 4l4 4-4 4M7 12l-4-4 4-4" stroke-width="1.2"/></svg>
+    <p>Busca dos camiones o selecciona dos empresas para ver la comparativa</p>
+  </div>
+
+  <div id="cmp-map-area" style="display:none">
+    <div class="anim-bar" id="cmp-anim-bar" style="margin-top:8px;display:flex">
+      <span class="ctrl-lbl">Animar:</span>
+      <button class="gbtn cmp-anim-btn active" id="cmp-anim-a" onclick="selectCmpAnim('a')" style="border-color:var(--accent);color:var(--accent)">Camión vía A</button>
+      <button class="gbtn cmp-anim-btn" id="cmp-anim-b" onclick="selectCmpAnim('b')" style="border-color:var(--alt);color:var(--alt)">Camión vía B</button>
+    </div>
+    <div style="position:relative;margin-top:8px">
+      <div id="cmp-map" style="height:480px;border:1px solid var(--border);border-radius:4px"></div>
+    </div>
+    <div class="cmp-panel" id="cmp-panel-emp" style="margin-top:16px;display:block">
+      <div class="cmp-panel-header">
+        <span class="cmp-panel-title" id="cmp-panel-title">Comparativa</span>
+      </div>
+      <div class="cmp-cols">
+        <div class="cmp-col cmp-col-a">
+          <div class="cmp-col-head" id="cmp-head-a"></div>
+          <div class="cmp-col-cards" id="cmp-cards-a"></div>
+        </div>
+        <div class="cmp-col-dividers" id="cmp-deltas"></div>
+        <div class="cmp-col cmp-col-b">
+          <div class="cmp-col-head" id="cmp-head-b"></div>
+          <div class="cmp-col-cards" id="cmp-cards-b"></div>
+        </div>
+      </div>
+      <div class="bsp-chart-wrap" style="margin-top:20px">
+        <canvas id="chart-compare" height="100"></canvas>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end cmp-subpanel-global -->
+
+  <!-- Sub-panel: Temporal -->
+  <div id="cmp-subpanel-temporal" class="sub-tab-panel">
+  <div class="gps-section" style="padding-top:16px">
+
+    <!-- Estado de carga R2 -->
+    <div class="gps-topbar" id="temp-topbar">
+      <span id="temp-csv-status" style="font-family:'Syne Mono',monospace;font-size:10px;color:var(--muted)">
+        Selecciona una empresa en el tab Camión para ver la evolución temporal
+      </span>
+    </div>
+
+    <!-- Filtros -->
+    <div class="gps-filters" id="temp-filters" style="display:none;margin-top:12px">
+      <span class="ctrl-lbl">Empresa</span>
+      <select class="gps-select" id="temp-empresa-sel" onchange="tempApplyFilters()" style="min-width:160px">
+        <option value="all">Todas</option>
+      </select>
+      <span class="ctrl-lbl">Métrica</span>
+      <select class="gps-select" id="temp-metrica-sel" onchange="tempApplyFilters()">
+        <option value="total_ph">p/h total</option>
+        <option value="gse_ab_ph">GSE AB p/h</option>
+        <option value="gse_c1a_ph">GSE C1a p/h</option>
+        <option value="gse_c2_ph">GSE C2 p/h</option>
+        <option value="gse_c3_ph">GSE C3 p/h</option>
+        <option value="gse_d_ph">GSE D p/h</option>
+        <option value="gse_e_ph">GSE E p/h</option>
+        <option value="edad_menor_25_ph">&lt;25 p/h</option>
+        <option value="edad_25_34_ph">25-34 p/h</option>
+        <option value="edad_35_44_ph">35-44 p/h</option>
+        <option value="edad_45_54_ph">45-54 p/h</option>
+        <option value="edad_55_64_ph">55-64 p/h</option>
+        <option value="edad_mayor_65_ph">&gt;65 p/h</option>
+        <option value="total_personas">Personas totales</option>
+      </select>
+      <span class="ctrl-lbl">Ver por</span>
+      <select class="gps-select" id="temp-dim-sel" onchange="tempApplyFilters()">
+        <option value="mes">Mes</option>
+        <option value="dia_semana">Día de semana</option>
+        <option value="hora_salida">Hora de salida</option>
+      </select>
+    </div>
+
+    <!-- Área vacía -->
+    <div id="temp-empty" class="gps-map-empty" style="margin-top:24px">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+        <circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 4"/>
+      </svg>
+      <p>Selecciona una empresa en el tab Camión para ver la evolución temporal</p>
+      <span style="font-size:10px">Los datos se cargan automáticamente desde la base de datos</span>
+    </div>
+
+    <!-- Contenido -->
+    <div id="temp-content" style="display:none">
+
+      <!-- Stats rápidas -->
+      <div class="temp-kpi-row" id="temp-kpi-row"></div>
+
+      <!-- Gráfico principal: evolución -->
+      <div class="temp-chart-card" style="margin-top:16px">
+        <div class="temp-chart-header">
+          <span class="temp-chart-title" id="temp-chart1-title">Evolución por mes</span>
+          <span class="temp-chart-sub" id="temp-chart1-sub"></span>
+        </div>
+        <canvas id="temp-chart-evol" height="100"></canvas>
+      </div>
+
+      <!-- Gráficos secundarios: 2 columnas -->
+      <div class="temp-charts-2col" style="margin-top:16px">
+        <div class="temp-chart-card">
+          <div class="temp-chart-header">
+            <span class="temp-chart-title">Por día de semana</span>
+            <span class="temp-chart-sub">Promedio p/h por día</span>
+          </div>
+          <canvas id="temp-chart-diasem" height="140"></canvas>
+        </div>
+        <div class="temp-chart-card">
+          <div class="temp-chart-header">
+            <span class="temp-chart-title">Por hora de salida</span>
+            <span class="temp-chart-sub">Distribución de impacto por franja</span>
+          </div>
+          <canvas id="temp-chart-hora" height="140"></canvas>
+        </div>
+      </div>
+
+      <!-- Tabla resumen -->
+      <div class="temp-chart-card" style="margin-top:16px">
+        <div class="temp-chart-header">
+          <span class="temp-chart-title">Resumen por empresa</span>
+          <span class="temp-chart-sub">Promedio, máximo y cobertura por empresa</span>
+        </div>
+        <div id="temp-tabla" style="overflow-x:auto"></div>
+      </div>
+
+    </div>
+  </div>
+  </div>
+
+</div>
+</div><!-- end tab-comparativas -->
+
+
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- LIBRERÍAS EXTERNAS                                                 -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- CONFIGURACIÓN R2 — editar solo esta URL                           -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<script>
+  // ⚠️ REEMPLAZA esta URL con la URL pública de tu bucket R2
+  const R2_BASE = 'https://TU_BUCKET.r2.dev';
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- MÓDULOS JS DE LA APLICACIÓN                                        -->
+<!--   Orden de carga importante: impactos → gps → animation → init    -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<script src="js/r2.js"></script>
+<script src="js/gps.js"></script>
+<script src="js/animation.js"></script>
+<script src="js/comparativas.js"></script>
+  <script src="js/temporal.js"></script>
+  <script src="js/h3overlay.js"></script>
+<script src="js/init.js"></script>
+
+</body>
+</html>
