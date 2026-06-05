@@ -852,7 +852,7 @@ select.pal-sel {
 .impact-legend-bar {
   height: 8px;
   border-radius: 2px;
-  background: linear-gradient(to right, #ffe650, #f08214, #b41e1e, #46051e);
+  background: linear-gradient(to right, #a6cee3, #1f78b4, #b2df8a, #33a02c, #fdbf6f, #e31a1c, #6a3d9a);
 }
 .impact-legend-labels {
   display: flex;
