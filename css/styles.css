@@ -405,8 +405,8 @@ select.pal-sel {
   width: 14px; height: 14px; border-radius: 50%;
   border: 2.5px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
 }
-.marker-start { background: #27ae60; }
-.marker-end   { background: #e74c3c; }
+.marker-start { background: #1a1814; }   /* --ink: inicio en negro */
+.marker-end   { background: #e8a020; }   /* --accent: fin en dorado */
 /* ── COORD PICKER ── */
 .coord-bar {
   display: flex; align-items: center; gap: 10px;
@@ -841,7 +841,7 @@ select.pal-sel {
 .impact-legend-bar {
   height: 8px;
   border-radius: 2px;
-  background: linear-gradient(to right, #6b8cba, #f5c842, #f59342, #e8382a);
+  background: linear-gradient(to right, #fef3db, #e8a020, #b46408, #643200);
 }
 .impact-legend-labels {
   display: flex;

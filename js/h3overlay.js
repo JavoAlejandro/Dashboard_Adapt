@@ -19,10 +19,10 @@ let _h3FilterKey = null;        // current (owner_id, dia, mes, ano) filter
 // ─── COLOR RAMP ───────────────────────────────────────────────────────────────
 // Azul (bajo) → verde → ámbar → rojo (alto)
 const H3_RAMP = [
-  { t: 0.00, r: 59,  g: 130, b: 246 },  // blue-400
-  { t: 0.33, r: 34,  g: 197, b: 94  },  // green-500
-  { t: 0.66, r: 245, g: 158, b: 11  },  // amber-500
-  { t: 1.00, r: 239, g: 68,  b: 68  },  // red-500
+  { t: 0.00, r: 219, g: 234, b: 254 },  // azul muy claro
+  { t: 0.40, r:  96, g: 165, b: 250 },  // azul claro medio
+  { t: 0.75, r:  37, g:  99, b: 235 },  // azul medio
+  { t: 1.00, r:  30, g:  58, b: 138 },  // azul muy oscuro
 ];
 
 function _h3Color(norm) {
