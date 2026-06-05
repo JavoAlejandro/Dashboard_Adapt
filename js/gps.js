@@ -15,10 +15,10 @@ let gpsLayers = {};     // bus_id → L.polyline
 // Per-route impact is stored in entry.impactSegs and drawn on demand.
 
 const IMPACT_RAMP = [
-  { t: 0.00, r: 254, g: 243, b: 219 },  // dorado muy claro
-  { t: 0.40, r: 232, g: 160, b:  32 },  // --accent dorado medio
-  { t: 0.75, r: 180, g: 100, b:   8 },  // dorado oscuro
-  { t: 1.00, r: 100, g:  50, b:   0 },  // café dorado muy oscuro
+  { t: 0.00, r: 232, g: 160, b:  32 },  // dorado medio
+  { t: 0.40, r: 210, g:  90, b:  30 },  // naranja ladrillo
+  { t: 0.70, r: 180, g:  40, b:  40 },  // rojo ladrillo
+  { t: 1.00, r:  90, g:  15, b:  35 },  // vino oscuro
 ];
 
 function _impactColor(norm) {
@@ -1374,11 +1374,19 @@ function initGPSMap() {
       }
 
       // Start/end markers created but NOT added to map — only shown when camion is selected
-      const mkIcon = (cls) => L.divIcon({ className:'', iconSize:[14,14], iconAnchor:[7,7], html:`<div class="${cls}" style="width:14px;height:14px"></div>` });
+      const mkIcon = (cls) => {
+        const isStart = cls === 'marker-start';
+        return L.divIcon({
+          className: '',
+          iconSize:   isStart ? [16, 14] : [13, 13],
+          iconAnchor: isStart ? [8, 14]  : [6, 6],   // triángulo: base centrada; cuadrado: centro
+          html: `<div class="${cls}"></div>`
+        });
+      };
       const startMarker = L.marker(coords[0], { icon: mkIcon('marker-start'), zIndexOffset: 1000 });
       const endMarker   = L.marker(coords[coords.length-1], { icon: mkIcon('marker-end'), zIndexOffset: 1000 });
       startMarker.bindTooltip(`⚫ Inicio${p.hora_salida != null ? ' · ' + formatHora(p.hora_salida) : ''}`, { className:'leaflet-tip', direction:'top' });
-      endMarker.bindTooltip('🟡 Fin', { className:'leaflet-tip', direction:'top' });
+      endMarker.bindTooltip('⚪ Fin', { className:'leaflet-tip', direction:'top' });
 
       entry.layer = line; entry.startMarker = startMarker; entry.endMarker = endMarker;
       entry._built = true; entry._markersOnMap = false;

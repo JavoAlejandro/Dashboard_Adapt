@@ -401,12 +401,23 @@ select.pal-sel {
 .anim-note { font-family: 'Syne Mono', monospace; font-size: 10px; color: #5a5650; letter-spacing: 0.04em; margin-left: auto; }
 
 /* ── START / END MARKERS ── */
-.marker-start, .marker-end {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 2.5px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+.marker-start {
+  width: 0; height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 14px solid #1a1814;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.4));
 }
-.marker-start { background: #1a1814; }   /* --ink: inicio en negro */
-.marker-end   { background: #e8a020; }   /* --accent: fin en dorado */
+.marker-end {
+  width: 13px; height: 13px;
+  border-radius: 2px;
+  background: #1a1814;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
 /* ── COORD PICKER ── */
 .coord-bar {
   display: flex; align-items: center; gap: 10px;
@@ -841,7 +852,7 @@ select.pal-sel {
 .impact-legend-bar {
   height: 8px;
   border-radius: 2px;
-  background: linear-gradient(to right, #fef3db, #e8a020, #b46408, #643200);
+  background: linear-gradient(to right, #e8a020, #d25a1e, #b42828, #5a0f23);
 }
 .impact-legend-labels {
   display: flex;
