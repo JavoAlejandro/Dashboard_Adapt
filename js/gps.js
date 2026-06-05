@@ -15,10 +15,10 @@ let gpsLayers = {};     // bus_id → L.polyline
 // Per-route impact is stored in entry.impactSegs and drawn on demand.
 
 const IMPACT_RAMP = [
-  { t: 0.00, r: 232, g: 160, b:  32 },  // dorado medio
-  { t: 0.40, r: 210, g:  90, b:  30 },  // naranja ladrillo
-  { t: 0.70, r: 180, g:  40, b:  40 },  // rojo ladrillo
-  { t: 1.00, r:  90, g:  15, b:  35 },  // vino oscuro
+  { t: 0.00, r: 255, g: 230, b:  80 },  // amarillo claro — bajo
+  { t: 0.35, r: 240, g: 130, b:  20 },  // naranja — medio-bajo
+  { t: 0.70, r: 180, g:  30, b:  30 },  // rojo oscuro — medio-alto
+  { t: 1.00, r:  70, g:   5, b:  30 },  // vino muy oscuro — alto
 ];
 
 function _impactColor(norm) {
