@@ -17,8 +17,7 @@ let _r2Modo           = null;   // "mezclado" | "empresa"
 // ── FETCH AUTENTICADO ────────────────────────────────────────────────────────
 async function r2Fetch(path) {
   const res = await fetch(`${R2_BASE}/${path}`, {
-    headers: { 'Authorization': `Bearer ${_r2Token}` ,
-      'Accept-Encoding': 'gzip',   // el browser descomprime automáticamente
+    headers: { 'Authorization': `Bearer ${_r2Token}` 
     },
   });
   if (res.status === 403) throw new Error('TOKEN_INVALIDO');
