@@ -17,8 +17,7 @@ let _r2Modo           = null;   // "mezclado" | "empresa"
 // ── FETCH AUTENTICADO ────────────────────────────────────────────────────────
 async function r2Fetch(path) {
   const res = await fetch(`${R2_BASE}/${path}`, {
-    headers: { 'Authorization': `Bearer ${_r2Token}` 
-    },
+    headers: { 'Authorization': `Bearer ${_r2Token}` },
   });
   if (res.status === 403) throw new Error('TOKEN_INVALIDO');
   if (!res.ok)            throw new Error(`HTTP ${res.status}`);
@@ -159,13 +158,19 @@ async function r2LoadEmpresa(valor) {
   let urlRutas, urlImpactos, urlH3, label, tieneImpactos;
 
   if (_r2Modo === 'mezclado') {
-    // valor = "rutas_10" → número = "10"
-    const num      = valor.replace('rutas_', '');
     const archivo  = _r2Index.archivos_mezclados?.find(a => a.id === valor);
     label          = archivo?.label || valor;
+
+    // Extraer número base ignorando sufijos como _parte1, _parte2, etc.
+    // "rutas_10"        → "10"
+    // "rutas_10_parte1" → "10"
+    // Si el index tiene "archivo_base" explícito, usarlo primero
+    const numBase  = archivo?.archivo_base
+                   || valor.replace('rutas_', '').replace(/_parte\d+$/, '');
+
     urlRutas       = `mezclado/rutas/${valor}.geojson`;
-    urlImpactos    = `mezclado/impactos/impactos_${num}.csv`;
-    urlH3          = `mezclado/h3/impactos_h3_${num}.csv`;
+    urlImpactos    = `mezclado/impactos/impactos_${numBase}.csv`;
+    urlH3          = `mezclado/h3/impactos_h3_${numBase}.csv`;
     tieneImpactos  = archivo?.tiene_impactos ?? true;
   } else {
     // valor = account_id
