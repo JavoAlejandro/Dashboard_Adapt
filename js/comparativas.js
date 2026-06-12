@@ -559,25 +559,25 @@ function _renderEmpresaCols(nameA, mA, nA, nameB, mB, nB) {
   const r1 = _mkRow(grid, false);
   const lbl1 = _mkCell(r1, 'Personas / hora por camión / día', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl1.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Promedio de p/h por día de operación, promediado entre camiones — ' + mA.phCount + ' / ' + mB.phCount + ' días con datos</span>';
-  const v1a = _mkCell(r1, fmtPH(mA.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:1.5px ' + EMP_A + ';text-stroke:1.5px ' + EMP_A + ';line-height:1');
+  const v1a = _mkCell(r1, fmtPH(mA.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_A + ';text-stroke:2px ' + EMP_A + ';line-height:1');
   _mkDeltaCell(r1, mA.avgPH, mB.avgPH);
-  _mkCell(r1, fmtPH(mB.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:1.5px ' + EMP_B + ';text-stroke:1.5px ' + EMP_B + ';line-height:1');
+  _mkCell(r1, fmtPH(mB.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_B + ';text-stroke:2px ' + EMP_B + ';line-height:1');
 
   // Row 2: días
   const r2 = _mkRow(grid, false);
   const lbl2 = _mkCell(r2, 'Días de datos por camión', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl2.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Promedio de días únicos por camión</span>';
-  _mkCell(r2, fmtD(mA.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:1.5px ' + EMP_A + ';text-stroke:1.5px ' + EMP_A + ';line-height:1');
+  _mkCell(r2, fmtD(mA.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_A + ';text-stroke:2px ' + EMP_A + ';line-height:1');
   _mkDeltaCell(r2, mA.avgDias, mB.avgDias);
-  _mkCell(r2, fmtD(mB.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:1.5px ' + EMP_B + ';text-stroke:1.5px ' + EMP_B + ';line-height:1');
+  _mkCell(r2, fmtD(mB.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_B + ';text-stroke:2px ' + EMP_B + ';line-height:1');
 
   // Row 3: stays
   const r3 = _mkRow(grid, false);
   const lbl3 = _mkCell(r3, 'Stays por camión / día', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl3.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Paradas promedio por día de operación, promediado entre camiones</span>';
-  _mkCell(r3, fmtS(mA.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:1.5px ' + EMP_A + ';text-stroke:1.5px ' + EMP_A + ';line-height:1');
+  _mkCell(r3, fmtS(mA.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_A + ';text-stroke:2px ' + EMP_A + ';line-height:1');
   _mkDeltaCell(r3, mA.avgStays, mB.avgStays);
-  _mkCell(r3, fmtS(mB.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:1.5px ' + EMP_B + ';text-stroke:1.5px ' + EMP_B + ';line-height:1');
+  _mkCell(r3, fmtS(mB.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_B + ';text-stroke:2px ' + EMP_B + ';line-height:1');
 
   // ── GSE + Edad section ──────────────────────────────────────────────
   if (sideA.avgGseProp || sideB.avgGseProp) {
