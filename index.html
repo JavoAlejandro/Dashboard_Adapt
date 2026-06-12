@@ -458,7 +458,7 @@
   <!-- ── MODO EMPRESA vs EMPRESA ── -->
   <div id="cmp-empresa-inputs" class="cmp-tab-inputs" style="display:none">
     <div class="cmp-slot-tab cmp-slot-tab-a">
-      <div class="cmp-slot-head" style="color:var(--accent)">Empresa A</div>
+      <div class="cmp-slot-head">Empresa A</div>
       <select class="gps-select" id="cmp-emp-a" onchange="onCmpEmpChange()" style="min-width:200px">
         <option value="">Seleccionar empresa</option>
       </select>
@@ -466,15 +466,15 @@
     </div>
     <div class="cmp-vs-pill">VS</div>
     <div class="cmp-slot-tab cmp-slot-tab-b">
-      <div class="cmp-slot-head" style="color:var(--alt)">Empresa B</div>
+      <div class="cmp-slot-head">Empresa B</div>
       <select class="gps-select" id="cmp-emp-b" onchange="onCmpEmpChange()" style="min-width:200px">
         <option value="">Seleccionar empresa</option>
       </select>
-      <span class="cmp-found-badge" id="cmp-found-emp-b" style="display:none;color:var(--alt)"></span>
+      <span class="cmp-found-badge" id="cmp-found-emp-b" style="display:none"></span>
     </div>
     <button class="upload-btn" id="cmp-emp-go-btn" onclick="runComparativaEmpresas()" style="display:none;align-self:center;margin-left:16px">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:12px;height:12px"><path d="M2 8h12M9 4l4 4-4 4M7 12l-4-4 4-4"/></svg>
-      Comparar empresas
+      Comparar
     </button>
   </div>
 
@@ -496,17 +496,23 @@
       <div id="cmp-map" style="height:480px;border:1px solid var(--border);border-radius:4px"></div>
     </div>
     <div class="cmp-panel" id="cmp-panel-emp" style="margin-top:16px;display:block">
-      <div class="cmp-panel-header">
-        <span class="cmp-panel-title" id="cmp-panel-title">Comparativa</span>
+      <div class="cmp-panel-header" id="cmp-panel-header-row">
+        <div class="cmp-company-badge">
+          <div class="cmp-company-id side-a" id="cmp-head-a"></div>
+          <div class="cmp-company-meta side-a" id="cmp-meta-a"></div>
+        </div>
+        <div class="cmp-vs-divider">VS</div>
+        <div class="cmp-company-badge" style="align-items:flex-end">
+          <div class="cmp-company-id side-b" id="cmp-head-b"></div>
+          <div class="cmp-company-meta side-b" id="cmp-meta-b"></div>
+        </div>
       </div>
       <div class="cmp-cols">
         <div class="cmp-col cmp-col-a">
-          <div class="cmp-col-head" id="cmp-head-a"></div>
           <div class="cmp-col-cards" id="cmp-cards-a"></div>
         </div>
         <div class="cmp-col-dividers" id="cmp-deltas"></div>
         <div class="cmp-col cmp-col-b">
-          <div class="cmp-col-head" id="cmp-head-b"></div>
           <div class="cmp-col-cards" id="cmp-cards-b"></div>
         </div>
       </div>
