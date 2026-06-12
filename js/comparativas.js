@@ -557,27 +557,27 @@ function _renderEmpresaCols(nameA, mA, nA, nameB, mB, nB) {
 
   // Row 1: p/h
   const r1 = _mkRow(grid, false);
-  const lbl1 = _mkCell(r1, 'Personas / hora por camión / día', 'flex:2;font-family:Syne Mono,monospace;font-size:11px;color:var(--ink2)');
+  const lbl1 = _mkCell(r1, 'Personas / hora por camión / día', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl1.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Promedio de p/h por día de operación, promediado entre camiones — ' + mA.phCount + ' / ' + mB.phCount + ' días con datos</span>';
-  const v1a = _mkCell(r1, fmtPH(mA.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:18px;letter-spacing:-0.03em;color:#e8a020;line-height:1');
+  const v1a = _mkCell(r1, fmtPH(mA.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:' + EMP_A + ';line-height:1');
   _mkDeltaCell(r1, mA.avgPH, mB.avgPH);
-  _mkCell(r1, fmtPH(mB.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:18px;letter-spacing:-0.03em;color:#4a6fa5;line-height:1');
+  _mkCell(r1, fmtPH(mB.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:' + EMP_B + ';line-height:1');
 
   // Row 2: días
   const r2 = _mkRow(grid, false);
-  const lbl2 = _mkCell(r2, 'Días de datos por camión', 'flex:2;font-family:Syne Mono,monospace;font-size:11px;color:var(--ink2)');
+  const lbl2 = _mkCell(r2, 'Días de datos por camión', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl2.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Promedio de días únicos por camión</span>';
-  _mkCell(r2, fmtD(mA.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:18px;letter-spacing:-0.03em;color:#e8a020;line-height:1');
+  _mkCell(r2, fmtD(mA.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:' + EMP_A + ';line-height:1');
   _mkDeltaCell(r2, mA.avgDias, mB.avgDias);
-  _mkCell(r2, fmtD(mB.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:18px;letter-spacing:-0.03em;color:#4a6fa5;line-height:1');
+  _mkCell(r2, fmtD(mB.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:' + EMP_B + ';line-height:1');
 
   // Row 3: stays
   const r3 = _mkRow(grid, false);
-  const lbl3 = _mkCell(r3, 'Stays por camión / día', 'flex:2;font-family:Syne Mono,monospace;font-size:11px;color:var(--ink2)');
+  const lbl3 = _mkCell(r3, 'Stays por camión / día', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl3.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Paradas promedio por día de operación, promediado entre camiones</span>';
-  _mkCell(r3, fmtS(mA.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:18px;letter-spacing:-0.03em;color:#e8a020;line-height:1');
+  _mkCell(r3, fmtS(mA.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:' + EMP_A + ';line-height:1');
   _mkDeltaCell(r3, mA.avgStays, mB.avgStays);
-  _mkCell(r3, fmtS(mB.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:18px;letter-spacing:-0.03em;color:#4a6fa5;line-height:1');
+  _mkCell(r3, fmtS(mB.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:' + EMP_B + ';line-height:1');
 
   // ── GSE + Edad section ──────────────────────────────────────────────
   if (sideA.avgGseProp || sideB.avgGseProp) {
@@ -585,17 +585,20 @@ function _renderEmpresaCols(nameA, mA, nA, nameB, mB, nB) {
     segSep.style.cssText = 'margin-top:24px;border-top:1px solid var(--border);padding-top:16px';
     panel.appendChild(segSep);
 
-    // Section title
+    // Section title + subtitle — orden correcto, sin margin-top negativo
     const segTitle = document.createElement('div');
-    segTitle.style.cssText = 'font-family:Syne,sans-serif;font-weight:800;font-size:15px;color:var(--ink);margin-bottom:14px';
+    segTitle.style.cssText = 'font-family:Syne,sans-serif;font-weight:700;font-size:13px;color:var(--ink);margin-bottom:4px';
     segTitle.textContent = 'Distribución socioeconómica y etaria';
     segSep.appendChild(segTitle);
+
     const segSub = document.createElement('div');
-    segSub.style.cssText = 'font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);margin-top:-10px;margin-bottom:16px;letter-spacing:0.04em';
+    segSub.style.cssText = 'font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);margin-bottom:12px;letter-spacing:0.04em';
     segSub.textContent = 'Proporción promedio por camión — ponderada entre sus días de operación';
+    segSep.appendChild(segSub);
+
     if (typeof estPropGSE !== 'undefined' && estPropGSE) {
       const legEl = document.createElement('div');
-      legEl.style.cssText = 'font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);margin-top:4px;letter-spacing:0.04em;display:flex;gap:12px';
+      legEl.style.cssText = 'font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);margin-bottom:12px;letter-spacing:0.04em;display:flex;gap:12px';
       legEl.innerHTML = '<span><span class="trend-arrow trend-up">↑</span> &gt;+1pp vs estimador</span><span><span class="trend-arrow trend-down">↓</span> &lt;-1pp vs estimador</span><span><span class="trend-arrow trend-flat">—</span> dentro del rango</span>';
       segSep.appendChild(legEl);
     }
