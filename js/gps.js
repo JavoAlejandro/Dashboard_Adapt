@@ -2016,6 +2016,8 @@ function applyFilters() {
     animSetTarget(singleId);
     showBusStats(singleId);
     if (!compareState.active) showCompareButton(singleId);
+    // Sincronizar panel de Ruido si está activo (o cuando se entre a él)
+    if (typeof ruidoSyncRoute === 'function') ruidoSyncRoute(singleId);
   } else if (anyActive && Object.keys(statsData).length > 0) {
     showGroupStats();
   } else if (!anyActive) {

@@ -18,6 +18,12 @@ function switchSubTab(name, btn) {
         scheduleImpactDraw(gpsMap);
     }, 80);
   }
+
+  // Entrando al sub-tab Ruido: inicializar mapa propio + cargar CSV (lazy) +
+  // sincronizar con el camión actualmente seleccionado en Exposición
+  if (name === 'ruido' && typeof ruidoOnTabEnter === 'function') {
+    ruidoOnTabEnter();
+  }
 }
 
 
