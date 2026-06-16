@@ -165,9 +165,35 @@ function ruidoInitMap() {
 function ruidoSyncRoute(busId) {
   if (!_ruidoMap) return;   // sub-tab Ruido aún no se ha abierto — nada que hacer todavía
 
-  // Limpiar capa de ruta anterior si existe
-  if (_ruidoRouteLayer) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
-  ruidoAnimReset();
+  // ── Limpieza completa de TODO lo relacionado a la ruta anterior ────────────
+  // Importante: limpiar ANTES de tocar ruidoAnimState.targetId, porque
+  // ruidoAnimReset() usa targetId para decidir qué restaurar.
+  if (ruidoAnimState.rafId) cancelAnimationFrame(ruidoAnimState.rafId);
+  ruidoAnimState.active   = false;
+  ruidoAnimState.progress = 0;
+  if (ruidoAnimState.animLayer && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animLayer); ruidoAnimState.animLayer = null; }
+  if (ruidoAnimState.animDot   && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animDot);   ruidoAnimState.animDot   = null; }
+  if (_ruidoRouteLayer && _ruidoMap) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
+  if (_ruidoLayerGrp   && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp);   _ruidoLayerGrp   = null; }
+  _ruidoCurrentHour      = null;
+  _ruidoHexEnVentana     = null;
+  ruidoAnimState.targetId = null;   // limpiar referencia ANTES de resetear UI
+
+  // Resetear controles de animación (botones, barra de progreso, badges)
+  const _fill  = document.getElementById('ruido-anim-fill');
+  const _thumb = document.getElementById('ruido-anim-thumb');
+  const _label = document.getElementById('ruido-anim-label');
+  const _play  = document.getElementById('ruido-anim-icon-play');
+  const _pause = document.getElementById('ruido-anim-icon-pause');
+  if (_fill)  _fill.style.width    = '0%';
+  if (_thumb) _thumb.style.left    = '0%';
+  if (_label) _label.textContent   = '0%';
+  if (_play)  _play.style.display  = '';
+  if (_pause) _pause.style.display = 'none';
+  const badge = document.getElementById('ruido-hour-badge');
+  if (badge) badge.style.display = 'none';
+  const winBadge = document.getElementById('ruido-window-badge');
+  if (winBadge) winBadge.style.display = 'none';
 
   const entry = gpsLayers[busId];
   const note  = document.getElementById('ruido-anim-note');
@@ -175,6 +201,7 @@ function ruidoSyncRoute(busId) {
   if (!entry) {
     document.getElementById('map-ruido-empty').style.display = 'flex';
     document.getElementById('map-ruido-wrap').style.display  = 'none';
+    document.getElementById('ruido-side-stats').style.display = 'none';
     return;
   }
 
@@ -194,7 +221,12 @@ function ruidoSyncRoute(busId) {
   if (note) note.textContent = `Camión ${oid} · Día ${dia} · ${entry.coords.length} puntos`;
 
   // Precalcular hexágonos dentro del radio de la ruta (corredor de ruido relevante)
-  if (_ruidoLoaded) _ruidoComputarVentana(entry);
+  if (_ruidoLoaded) {
+    _ruidoComputarVentana(entry);
+    _ruidoRenderStatsPanel(entry);
+  } else {
+    document.getElementById('ruido-side-stats').style.display = 'none';
+  }
 
   // Mostrar el hexágono de la hora inicial inmediatamente (frame 0)
   if (_ruidoLoaded) _ruidoPaintForPoint(entry, 0);
@@ -277,9 +309,132 @@ function ruidoSetRadioKm(km) {
   const entry = gpsLayers[ruidoAnimState.targetId];
   if (entry) {
     _ruidoComputarVentana(entry);
+    _ruidoRenderStatsPanel(entry);
     const hourActual = _ruidoCurrentHour;
     _ruidoCurrentHour = null;   // forzar repintado aunque sea la misma hora
     if (hourActual != null) _ruidoPaintHour(hourActual);
+  }
+}
+
+// ─── PANEL LATERAL DE ESTADÍSTICAS DE RUIDO ──────────────────────────────────
+// Calcula el dB promedio del corredor de la ruta a lo largo de TODAS las
+// horas que dura el recorrido (no solo la hora actual de la animación),
+// y un desglose hora por hora.
+
+function _ruidoCalcularEstadisticas(entry) {
+  if (!_ruidoLoaded || !_ruidoByHour || !_ruidoHexEnVentana) return null;
+
+  // Determinar qué horas cubre la ruta, leyendo coord_timestamps
+  const ts = entry.feature.properties.coord_timestamps || [];
+  const horasRuta = new Set();
+  ts.forEach(t => {
+    if (!t) return;
+    const m = String(t).match(/^(\d{1,2}):/);
+    if (m) horasRuta.add(parseInt(m[1], 10));
+  });
+
+  if (horasRuta.size === 0) return null;
+
+  // Para cada hora del recorrido, promediar dB de los hexágonos en la ventana
+  const porHora = [];
+  let sumaTotal = 0, nTotal = 0;
+
+  Array.from(horasRuta).sort((a, b) => a - b).forEach(hour => {
+    const hexMapFull = _ruidoByHour.get(hour);
+    if (!hexMapFull) { porHora.push({ hour, avgDb: null, nHex: 0 }); return; }
+
+    const dbVals = [];
+    hexMapFull.forEach((row, hexId) => {
+      if (_ruidoHexEnVentana.has(hexId)) {
+        const db = +row.L_rec_dB;
+        if (!isNaN(db)) dbVals.push(db);
+      }
+    });
+
+    if (dbVals.length) {
+      const avg = dbVals.reduce((a, b) => a + b, 0) / dbVals.length;
+      porHora.push({ hour, avgDb: avg, nHex: dbVals.length });
+      sumaTotal += dbVals.reduce((a, b) => a + b, 0);
+      nTotal    += dbVals.length;
+    } else {
+      porHora.push({ hour, avgDb: null, nHex: 0 });
+    }
+  });
+
+  const avgGlobal = nTotal > 0 ? sumaTotal / nTotal : null;
+  return { avgGlobal, porHora, nMuestras: nTotal };
+}
+
+function _ruidoRenderStatsPanel(entry) {
+  const panel = document.getElementById('ruido-side-stats');
+  if (!panel) return;
+
+  const stats = _ruidoCalcularEstadisticas(entry);
+  if (!stats || stats.avgGlobal == null) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'flex';
+
+  // Total destacado
+  const avgEl    = document.getElementById('ruido-avg-db');
+  const avgSubEl = document.getElementById('ruido-avg-db-sub');
+  if (avgEl)    avgEl.textContent    = stats.avgGlobal.toFixed(1) + ' dB(A)';
+  if (avgSubEl) avgSubEl.textContent = `Promedio en el corredor (${_ruidoRadioKm} km) · ${stats.nMuestras.toLocaleString()} muestras hexágono-hora`;
+
+  // Identidad del camión
+  const p   = entry.feature.properties;
+  const oid = p.owner_id ?? '';
+  const dia = p.dia ?? '';
+  const mes = p.mes ?? '';
+  const titleEl = document.getElementById('ruido-bsp-title');
+  const subEl   = document.getElementById('ruido-bsp-sub');
+  if (titleEl) titleEl.textContent = `Camión ${oid} · Día ${dia}`;
+  if (subEl)   subEl.textContent   = mes ? `Mes ${mes}` : '';
+
+  // Cards: mínimo / máximo del recorrido
+  const validHoras = stats.porHora.filter(h => h.avgDb != null);
+  const cardsEl = document.getElementById('ruido-bsp-cards');
+  if (cardsEl && validHoras.length) {
+    const minH = validHoras.reduce((a, b) => a.avgDb < b.avgDb ? a : b);
+    const maxH = validHoras.reduce((a, b) => a.avgDb > b.avgDb ? a : b);
+    cardsEl.innerHTML = `
+      <div class="gss-card">
+        <div class="gss-card-dot" style="background:#38a169"></div>
+        <span class="gss-card-lbl">Hora más silenciosa</span>
+        <span class="gss-card-val">${String(minH.hour).padStart(2,'0')}h · ${minH.avgDb.toFixed(1)}dB</span>
+      </div>
+      <div class="gss-card">
+        <div class="gss-card-dot" style="background:#c53030"></div>
+        <span class="gss-card-lbl">Hora más ruidosa</span>
+        <span class="gss-card-val">${String(maxH.hour).padStart(2,'0')}h · ${maxH.avgDb.toFixed(1)}dB</span>
+      </div>
+      <div class="gss-card">
+        <div class="gss-card-dot" style="background:var(--accent)"></div>
+        <span class="gss-card-lbl">Horas con datos</span>
+        <span class="gss-card-val">${validHoras.length} / ${stats.porHora.length}</span>
+      </div>`;
+  }
+
+  // Desglose por hora
+  const horasWrap = document.getElementById('ruido-horas-wrap');
+  const horasList = document.getElementById('ruido-horas-list');
+  if (horasWrap && horasList) {
+    if (stats.porHora.length) {
+      horasWrap.style.display = 'block';
+      horasList.innerHTML = stats.porHora.map(h => {
+        const norm  = h.avgDb != null ? Math.max(0, Math.min(1, (h.avgDb - _ruidoMinDb) / Math.max(_ruidoMaxDb - _ruidoMinDb, 1))) : 0;
+        const color = h.avgDb != null ? _ruidoCssColor(norm, 0.9) : 'var(--border)';
+        const txt   = h.avgDb != null ? `${h.avgDb.toFixed(1)} dB(A)` : 'sin datos';
+        return `<li style="display:flex;align-items:center;gap:8px;font-family:'Syne Mono',monospace;font-size:10px;padding:4px 0">
+          <span style="width:34px;color:var(--muted)">${String(h.hour).padStart(2,'0')}:00</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>
+          <span style="color:var(--ink)">${txt}</span>
+        </li>`;
+      }).join('');
+    } else {
+      horasWrap.style.display = 'none';
+    }
   }
 }
 
@@ -513,7 +668,10 @@ async function ruidoOnTabEnter() {
 
   if (targetId) {
     ruidoSyncRoute(targetId);
-    if (ok && gpsLayers[targetId]) _ruidoComputarVentana(gpsLayers[targetId]);
+    if (ok && gpsLayers[targetId]) {
+      _ruidoComputarVentana(gpsLayers[targetId]);
+      _ruidoRenderStatsPanel(gpsLayers[targetId]);
+    }
   } else {
     // Ningún filtro resuelve a una sola ruta — no hay nada específico que mostrar
     document.getElementById('map-ruido-empty').style.display = 'flex';
