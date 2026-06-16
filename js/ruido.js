@@ -264,41 +264,75 @@ function _ruidoHexCentro(hexId) {
   }
 }
 
-// Precalcula el set de hexágonos dentro del radio de la ruta activa.
-// Se llama una sola vez por ruta (no por frame de animación) — es la parte
-// costosa, pero solo corre al sincronizar la ruta, no en cada hexágono/hora.
+let _ruidoVentanaPorHora = null;   // Map<hora, Set<h3_index>> — ventana específica de cada hora
+
+// Agrupa los índices de coords/timestamps de la ruta por hora del ping.
+// Retorna Map<hora, [coords...]> — solo los pings (lat,lon) que ocurrieron en esa hora.
+function _ruidoAgruparPingsPorHora(entry) {
+  const ts     = entry.feature.properties.coord_timestamps || [];
+  const coords = entry.coords;
+  const porHora = new Map();
+
+  for (let i = 0; i < coords.length; i++) {
+    const t = ts[i];
+    if (!t) continue;
+    const m = String(t).match(/^(\d{1,2}):/);
+    if (!m) continue;
+    const hour = parseInt(m[1], 10);
+    if (!porHora.has(hour)) porHora.set(hour, []);
+    porHora.get(hour).push(coords[i]);
+  }
+  return porHora;
+}
+
+// Precalcula, PARA CADA HORA del recorrido, el set de hexágonos dentro del
+// radio respecto a los pings que ocurrieron específicamente en esa hora
+// (no respecto a la ruta completa). Esto evita que una hora "contamine"
+// el promedio con tramos de la ruta que el camión aún no había recorrido.
 function _ruidoComputarVentana(entry) {
-  _ruidoHexEnVentana = null;
+  _ruidoVentanaPorHora = null;
+  _ruidoHexEnVentana   = null;   // se mantiene por compatibilidad, ver nota abajo
   if (!_ruidoLoaded || !entry) return;
 
-  // Todos los hexágonos únicos presentes en el dataset de ruido
+  const pingsPorHora = _ruidoAgruparPingsPorHora(entry);
+  if (pingsPorHora.size === 0) return;
+
+  // Todos los hexágonos únicos presentes en el dataset de ruido (universo de búsqueda)
   const todosHex = new Set();
   _ruidoByHour.forEach(hexMap => hexMap.forEach((_, hexId) => todosHex.add(hexId)));
 
-  // Submuestrear la ruta para no chequear miles de pings contra miles de hexágonos.
-  // Cada ~20 puntos es más que suficiente para definir el corredor de la ruta.
-  const coords = entry.coords;   // [lat, lon]
-  const step   = Math.max(1, Math.floor(coords.length / 60));
-  const muestraRuta = [];
-  for (let i = 0; i < coords.length; i += step) muestraRuta.push(coords[i]);
+  _ruidoVentanaPorHora = new Map();
+  let totalEnAlgunaHora = new Set();
 
-  const dentro = new Set();
-  todosHex.forEach(hexId => {
-    const centro = _ruidoHexCentro(hexId);
-    if (!centro) return;
-    const [hLat, hLon] = centro;
-    // Si CUALQUIER punto muestreado de la ruta está a <= radio del hexágono → incluir
-    const cerca = muestraRuta.some(([lat, lon]) =>
-      _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
-    );
-    if (cerca) dentro.add(hexId);
+  pingsPorHora.forEach((pingsHora, hour) => {
+    // Submuestrear: con tramos de 1 hora normalmente hay pocos pings, pero
+    // por seguridad limitamos a ~40 puntos representativos del tramo.
+    const step = Math.max(1, Math.floor(pingsHora.length / 40));
+    const muestra = [];
+    for (let i = 0; i < pingsHora.length; i += step) muestra.push(pingsHora[i]);
+
+    const dentro = new Set();
+    todosHex.forEach(hexId => {
+      const centro = _ruidoHexCentro(hexId);
+      if (!centro) return;
+      const [hLat, hLon] = centro;
+      const cerca = muestra.some(([lat, lon]) =>
+        _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
+      );
+      if (cerca) dentro.add(hexId);
+    });
+
+    _ruidoVentanaPorHora.set(hour, dentro);
+    dentro.forEach(h => totalEnAlgunaHora.add(h));
   });
 
-  _ruidoHexEnVentana = dentro;
+  // _ruidoHexEnVentana ahora representa la UNIÓN de todas las horas — se usa
+  // solo como fallback si alguna función vieja lo consulta directamente.
+  _ruidoHexEnVentana = totalEnAlgunaHora;
 
   const badge = document.getElementById('ruido-window-badge');
   if (badge) {
-    badge.textContent = `Ventana: ${_ruidoRadioKm} km · ${dentro.size.toLocaleString()} hexágonos en corredor`;
+    badge.textContent = `Ventana: ${_ruidoRadioKm} km · ${totalEnAlgunaHora.size.toLocaleString()} hexágonos en corredor (todas las horas)`;
     badge.style.display = 'block';
   }
 }
@@ -322,7 +356,7 @@ function ruidoSetRadioKm(km) {
 // y un desglose hora por hora.
 
 function _ruidoCalcularEstadisticas(entry) {
-  if (!_ruidoLoaded || !_ruidoByHour || !_ruidoHexEnVentana) return null;
+  if (!_ruidoLoaded || !_ruidoByHour || !_ruidoVentanaPorHora) return null;
 
   // Determinar qué horas cubre la ruta, leyendo coord_timestamps
   const ts = entry.feature.properties.coord_timestamps || [];
@@ -335,17 +369,20 @@ function _ruidoCalcularEstadisticas(entry) {
 
   if (horasRuta.size === 0) return null;
 
-  // Para cada hora del recorrido, promediar dB de los hexágonos en la ventana
+  // Para cada hora del recorrido, promediar dB SOLO de los hexágonos
+  // que están dentro del radio respecto a los pings de ESA hora específica.
   const porHora = [];
   let sumaTotal = 0, nTotal = 0;
 
   Array.from(horasRuta).sort((a, b) => a - b).forEach(hour => {
-    const hexMapFull = _ruidoByHour.get(hour);
-    if (!hexMapFull) { porHora.push({ hour, avgDb: null, nHex: 0 }); return; }
+    const hexMapFull  = _ruidoByHour.get(hour);
+    const ventanaHora = _ruidoVentanaPorHora.get(hour);
+
+    if (!hexMapFull || !ventanaHora) { porHora.push({ hour, avgDb: null, nHex: 0 }); return; }
 
     const dbVals = [];
     hexMapFull.forEach((row, hexId) => {
-      if (_ruidoHexEnVentana.has(hexId)) {
+      if (ventanaHora.has(hexId)) {
         const db = +row.L_rec_dB;
         if (!isNaN(db)) dbVals.push(db);
       }
@@ -380,7 +417,7 @@ function _ruidoRenderStatsPanel(entry) {
   const avgEl    = document.getElementById('ruido-avg-db');
   const avgSubEl = document.getElementById('ruido-avg-db-sub');
   if (avgEl)    avgEl.textContent    = stats.avgGlobal.toFixed(1) + ' dB(A)';
-  if (avgSubEl) avgSubEl.textContent = `Promedio en el corredor (${_ruidoRadioKm} km) · ${stats.nMuestras.toLocaleString()} muestras hexágono-hora`;
+  if (avgSubEl) avgSubEl.textContent = `Promedio ponderado por tramo horario (${_ruidoRadioKm} km de radio) · ${stats.nMuestras.toLocaleString()} muestras hexágono-hora`;
 
   // Identidad del camión
   const p   = entry.feature.properties;
@@ -466,9 +503,11 @@ function _ruidoPaintHour(hour) {
   const hexMapFull = _ruidoByHour.get(hour);
   _ruidoLayerGrp = L.layerGroup();
 
-  // Filtrar solo hexágonos dentro de la ventana de la ruta activa
-  const hexMap = _ruidoHexEnVentana
-    ? new Map([...hexMapFull].filter(([hexId]) => _ruidoHexEnVentana.has(hexId)))
+  // Filtrar solo hexágonos dentro de la ventana de ESTA hora específica
+  // (los pings que realmente ocurrieron entre HH:00 y HH:59), no de toda la ruta.
+  const ventanaHora = _ruidoVentanaPorHora ? _ruidoVentanaPorHora.get(hour) : null;
+  const hexMap = ventanaHora
+    ? new Map([...hexMapFull].filter(([hexId]) => ventanaHora.has(hexId)))
     : hexMapFull;
 
   hexMap.forEach((row, hexId) => {
