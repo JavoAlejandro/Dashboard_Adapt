@@ -13,6 +13,8 @@
 
 <!-- ── Estilos propios ── -->
 <link rel="stylesheet" href="css/styles.css">
+
+<link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 <body>
 
@@ -382,6 +384,14 @@
 
   <div class="gps-topbar">
     <span class="gps-status" id="ruido-status">Selecciona un camión en la pestaña Exposición para ver su exposición a ruido</span>
+    <span class="ctrl-lbl">Radio de búsqueda</span>
+    <select class="gps-select" id="ruido-radio-sel" onchange="ruidoSetRadioKm(this.value)" style="min-width:100px">
+      <option value="0.5">0.5 km</option>
+      <option value="1" selected>1 km</option>
+      <option value="2">2 km</option>
+      <option value="3">3 km</option>
+    </select>
+    <span class="gps-status" id="ruido-window-badge" style="display:none;color:var(--ink2)"></span>
   </div>
 
   <div id="map-ruido-empty" class="gps-map-empty">

@@ -193,11 +193,95 @@ function ruidoSyncRoute(busId) {
   const dia = p.dia ?? '';
   if (note) note.textContent = `Camión ${oid} · Día ${dia} · ${entry.coords.length} puntos`;
 
+  // Precalcular hexágonos dentro del radio de la ruta (corredor de ruido relevante)
+  if (_ruidoLoaded) _ruidoComputarVentana(entry);
+
   // Mostrar el hexágono de la hora inicial inmediatamente (frame 0)
   if (_ruidoLoaded) _ruidoPaintForPoint(entry, 0);
 }
 
 let _ruidoRouteLayer = null;
+
+// ─── VENTANA DE RADIO ALREDEDOR DE LA RUTA ────────────────────────────────────
+const RUIDO_RADIO_KM_DEFAULT = 1;   // radio en km alrededor de la ruta activa
+let _ruidoRadioKm        = RUIDO_RADIO_KM_DEFAULT;
+let _ruidoHexEnVentana   = null;    // Set<h3_index> precomputado para la ruta activa
+
+function _ruidoHaversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+            Math.sin(dLon/2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Centro de cada hexágono — cacheado para no recalcular con h3-js cada vez
+const _ruidoHexCentroCache = new Map();
+function _ruidoHexCentro(hexId) {
+  if (_ruidoHexCentroCache.has(hexId)) return _ruidoHexCentroCache.get(hexId);
+  try {
+    const fn = h3.cellToLatLng || h3.h3ToGeo;
+    const c  = fn ? fn(hexId) : null;   // [lat, lng]
+    _ruidoHexCentroCache.set(hexId, c);
+    return c;
+  } catch (e) {
+    _ruidoHexCentroCache.set(hexId, null);
+    return null;
+  }
+}
+
+// Precalcula el set de hexágonos dentro del radio de la ruta activa.
+// Se llama una sola vez por ruta (no por frame de animación) — es la parte
+// costosa, pero solo corre al sincronizar la ruta, no en cada hexágono/hora.
+function _ruidoComputarVentana(entry) {
+  _ruidoHexEnVentana = null;
+  if (!_ruidoLoaded || !entry) return;
+
+  // Todos los hexágonos únicos presentes en el dataset de ruido
+  const todosHex = new Set();
+  _ruidoByHour.forEach(hexMap => hexMap.forEach((_, hexId) => todosHex.add(hexId)));
+
+  // Submuestrear la ruta para no chequear miles de pings contra miles de hexágonos.
+  // Cada ~20 puntos es más que suficiente para definir el corredor de la ruta.
+  const coords = entry.coords;   // [lat, lon]
+  const step   = Math.max(1, Math.floor(coords.length / 60));
+  const muestraRuta = [];
+  for (let i = 0; i < coords.length; i += step) muestraRuta.push(coords[i]);
+
+  const dentro = new Set();
+  todosHex.forEach(hexId => {
+    const centro = _ruidoHexCentro(hexId);
+    if (!centro) return;
+    const [hLat, hLon] = centro;
+    // Si CUALQUIER punto muestreado de la ruta está a <= radio del hexágono → incluir
+    const cerca = muestraRuta.some(([lat, lon]) =>
+      _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
+    );
+    if (cerca) dentro.add(hexId);
+  });
+
+  _ruidoHexEnVentana = dentro;
+
+  const badge = document.getElementById('ruido-window-badge');
+  if (badge) {
+    badge.textContent = `Ventana: ${_ruidoRadioKm} km · ${dentro.size.toLocaleString()} hexágonos en corredor`;
+    badge.style.display = 'block';
+  }
+}
+
+function ruidoSetRadioKm(km) {
+  _ruidoRadioKm = parseFloat(km) || RUIDO_RADIO_KM_DEFAULT;
+  // Recalcular ventana para la ruta activa y repintar la hora actual
+  const entry = gpsLayers[ruidoAnimState.targetId];
+  if (entry) {
+    _ruidoComputarVentana(entry);
+    const hourActual = _ruidoCurrentHour;
+    _ruidoCurrentHour = null;   // forzar repintado aunque sea la misma hora
+    if (hourActual != null) _ruidoPaintHour(hourActual);
+  }
+}
 
 // ─── EXTRAER HORA DESDE coord_timestamps (formato "HH:MM") ───────────────────
 function _ruidoHourAtIndex(entry, idx) {
@@ -224,8 +308,13 @@ function _ruidoPaintHour(hour) {
     return;
   }
 
-  const hexMap = _ruidoByHour.get(hour);
+  const hexMapFull = _ruidoByHour.get(hour);
   _ruidoLayerGrp = L.layerGroup();
+
+  // Filtrar solo hexágonos dentro de la ventana de la ruta activa
+  const hexMap = _ruidoHexEnVentana
+    ? new Map([...hexMapFull].filter(([hexId]) => _ruidoHexEnVentana.has(hexId)))
+    : hexMapFull;
 
   hexMap.forEach((row, hexId) => {
     const latlngs = _ruidoH3ToLatLngs(hexId);
@@ -421,11 +510,10 @@ async function ruidoOnTabEnter() {
   // Sincronizar con el camión actualmente seleccionado en Exposición
   const busSel = document.getElementById('gps-bus-sel');
   const currentBusId = busSel && busSel.value !== 'all' ? busSel.value : null;
-  if (currentBusId) {
-    ruidoSyncRoute(currentBusId);
-  } else {
-    // Buscar la primera ruta visible como fallback
-    const firstId = Object.keys(gpsLayers || {})[0];
-    if (firstId) ruidoSyncRoute(firstId);
+  const targetId = currentBusId || Object.keys(gpsLayers || {})[0];
+  if (targetId) {
+    ruidoSyncRoute(targetId);
+    // Si el CSV terminó de cargar después de iniciar el sync, recalcular ventana
+    if (ok && gpsLayers[targetId]) _ruidoComputarVentana(gpsLayers[targetId]);
   }
 }
