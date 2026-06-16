@@ -507,13 +507,28 @@ async function ruidoOnTabEnter() {
   const ok = await ruidoEnsureLoaded();
   if (ok) _ruidoUpdateLegend();
 
-  // Sincronizar con el camión actualmente seleccionado en Exposición
-  const busSel = document.getElementById('gps-bus-sel');
-  const currentBusId = busSel && busSel.value !== 'all' ? busSel.value : null;
-  const targetId = currentBusId || Object.keys(gpsLayers || {})[0];
+  // Resolver la ruta única activa con la MISMA lógica que applyFilters():
+  // combinando empresa + camión + mes + día (no solo el selector de camión).
+  const targetId = _ruidoResolveSingleId();
+
   if (targetId) {
     ruidoSyncRoute(targetId);
-    // Si el CSV terminó de cargar después de iniciar el sync, recalcular ventana
     if (ok && gpsLayers[targetId]) _ruidoComputarVentana(gpsLayers[targetId]);
+  } else {
+    // Ningún filtro resuelve a una sola ruta — no hay nada específico que mostrar
+    document.getElementById('map-ruido-empty').style.display = 'flex';
+    document.getElementById('map-ruido-wrap').style.display  = 'none';
+    const note = document.getElementById('ruido-anim-note');
+    if (note) note.textContent = 'Selecciona un camión específico en la pestaña Exposición (Camión + Mes + Día)';
   }
+}
+
+// Replica la resolución de "singleId" de applyFilters() en gps.js, para que
+// Ruido siempre muestre exactamente la misma ruta que está activa en Exposición.
+function _ruidoResolveSingleId() {
+  if (typeof _getFilterVals !== 'function' || typeof _entryMatches !== 'function') return null;
+  const fv = _getFilterVals();
+  if (fv.bus === 'all') return null;   // sin camión específico → sin ruta única
+  const candidates = Object.entries(gpsLayers).filter(([, e]) => _entryMatches(e, fv));
+  return candidates.length === 1 ? candidates[0][0] : null;
 }
