@@ -396,26 +396,10 @@
 
   <div class="gps-main-row">
 
-    <!-- PANEL IZQUIERDO: estadísticas de ruido de la ruta -->
-    <div class="gps-side-stats" id="ruido-side-stats" style="display:none">
-      <div class="gss-header">
-        <div class="bsp-totals" id="ruido-bsp-totals">
-          <div class="bsp-total-row">
-            <span class="bsp-total-val" id="ruido-avg-db">—</span>
-          </div>
-          <div class="bsp-total-lbl" id="ruido-avg-db-sub" style="margin-top:2px">dB(A) promedio en el corredor de la ruta</div>
-        </div>
-        <div class="bsp-identity" id="ruido-bsp-identity" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-          <span class="bsp-title" id="ruido-bsp-title">Camión — · Día —</span>
-          <span class="bsp-sub" id="ruido-bsp-sub"></span>
-        </div>
-      </div>
-      <div class="gss-cards" id="ruido-bsp-cards"></div>
-      <!-- Desglose por hora -->
-      <div class="gss-vias" id="ruido-horas-wrap" style="display:none">
-        <div class="gss-vias-title">Nivel por hora del recorrido</div>
-        <ol class="gss-vias-list" id="ruido-horas-list"></ol>
-      </div>
+
+    <!-- PANEL IZQUIERDO: estadísticas de ruido — contenido generado dinámicamente por ruido.js -->
+    <div class="gps-side-stats" id="ruido-side-stats"
+         style="display:none;flex-direction:column;padding-left:18px;overflow-y:auto">
     </div>
 
     <!-- PANEL DERECHO: mapa + barra de animación -->

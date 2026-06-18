@@ -125,6 +125,7 @@ async function ruidoEnsureLoaded() {
 
           _ruidoLoaded  = true;
           _ruidoLoading = false;
+          _ruidoBuildPercentileIndex();   // construir índice de percentil una sola vez
           resolve(true);
         },
         error(e) {
@@ -350,10 +351,256 @@ function ruidoSetRadioKm(km) {
   }
 }
 
-// ─── PANEL LATERAL DE ESTADÍSTICAS DE RUIDO ──────────────────────────────────
-// Calcula el dB promedio del corredor de la ruta a lo largo de TODAS las
-// horas que dura el recorrido (no solo la hora actual de la animación),
-// y un desglose hora por hora.
+// ─── DATOS DE CAMIÓN HORA (segundo CSV, lazy) ─────────────────────────────────
+// ruido/camion_hora_rm.csv → R, R_v por account_id × owner_id × arc_id × hour
+// Se carga la primera vez que se necesita (al renderizar el panel de stats).
+let _camionData      = null;   // Map<owner_id, Map<hour, {R, R_v}>> — sumados por hora
+let _camionLoaded    = false;
+let _camionLoading   = false;
+
+async function _ruidoEnsureCamionLoaded() {
+  if (_camionLoaded || _camionLoading) return _camionLoaded;
+  _camionLoading = true;
+  try {
+    const res     = await r2Fetch('ruido/camion_hora_rm.csv');
+    const csvText = await res.text();
+    return new Promise(resolve => {
+      Papa.parse(csvText, {
+        header: true, dynamicTyping: true, skipEmptyLines: true,
+        complete({ data: rows }) {
+          // Agregar R y R_v por owner_id × hour (sumando todos los arcos)
+          _camionData = new Map();
+          rows.forEach(r => {
+            const oid  = String(r.owner_id  ?? '');
+            const hour = Math.round(+r.hour);
+            if (!oid || isNaN(hour)) return;
+            if (!_camionData.has(oid)) _camionData.set(oid, new Map());
+            const hMap = _camionData.get(oid);
+            const prev = hMap.get(hour) || { R: 0, R_v: 0 };
+            hMap.set(hour, { R: prev.R + (+r.R || 0), R_v: prev.R_v + (+r.R_v || 0) });
+          });
+          _camionLoaded  = true;
+          _camionLoading = false;
+          resolve(true);
+        },
+        error() { _camionLoading = false; resolve(false); },
+      });
+    });
+  } catch {
+    _camionLoading = false;
+    return false;
+  }
+}
+
+// Obtiene R y R_v totales del camión sumando todas las horas del recorrido.
+function _ruidoGetPersonasAlcanzadas(entry) {
+  if (!_camionData) return null;
+  const oid  = String(entry.feature.properties.owner_id ?? '');
+  const hMap = _camionData.get(oid);
+  if (!hMap) return null;
+
+  // Horas que cubre la ruta
+  const ts = entry.feature.properties.coord_timestamps || [];
+  const horasRuta = new Set();
+  ts.forEach(t => {
+    const m = t && String(t).match(/^(\d{1,2}):/);
+    if (m) horasRuta.add(parseInt(m[1], 10));
+  });
+
+  let totalR = 0, totalRv = 0;
+  horasRuta.forEach(h => {
+    const d = hMap.get(h);
+    if (d) { totalR += d.R; totalRv += d.R_v; }
+  });
+  return totalR > 0 ? { R: Math.round(totalR), R_v: Math.round(totalRv) } : null;
+}
+
+// ─── PERCENTIL EN LA RM (calculado una sola vez tras cargar hexágonos_hora) ───
+let _ruidoDbSorted = null;   // Float64Array ordenado de todos los L_rec_dB de la RM
+
+function _ruidoBuildPercentileIndex() {
+  if (_ruidoDbSorted || !_ruidoData.length) return;
+  const vals = _ruidoData.map(r => +r.L_rec_dB).filter(v => !isNaN(v));
+  _ruidoDbSorted = new Float64Array(vals).sort();
+}
+
+function _ruidoPercentil(db) {
+  if (!_ruidoDbSorted) return null;
+  const n = _ruidoDbSorted.length;
+  let lo = 0, hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (_ruidoDbSorted[mid] <= db) lo = mid + 1; else hi = mid;
+  }
+  return Math.round((lo / n) * 100);
+}
+
+// ─── BANDAS DE RUIDO + REFERENTES ─────────────────────────────────────────────
+const RUIDO_BANDAS = [
+  { label: 'Bajo',      ref: 'zona residencial tranquila',          min: 0,  max: 55, color: '#2C9E5B' },
+  { label: 'Moderado',  ref: 'conversación normal',                 min: 55, max: 65, color: '#E8B53A' },
+  { label: 'Alto',      ref: 'tráfico urbano fluido',               min: 65, max: 75, color: '#F5862A' },
+  { label: 'Muy alto',  ref: 'tráfico intenso de una avenida',      min: 75, max: 85, color: '#E03131' },
+  { label: 'Extremo',   ref: 'cerca de una autopista congestionada', min: 85, max: 999, color: '#7A1631' },
+];
+const RUIDO_OMS_DB = 53;
+
+function _ruidoBanda(db) {
+  return RUIDO_BANDAS.find(b => db >= b.min && db < b.max) || RUIDO_BANDAS[RUIDO_BANDAS.length - 1];
+}
+
+// ─── PANEL LATERAL — REDISEÑADO SEGÚN MOCKUP ──────────────────────────────────
+function _ruidoRenderStatsPanel(entry) {
+  const panel = document.getElementById('ruido-side-stats');
+  if (!panel) return;
+
+  const stats = _ruidoCalcularEstadisticas(entry);
+  if (!stats || stats.avgGlobal == null) { panel.style.display = 'none'; return; }
+  panel.style.display = 'flex';
+
+  const db    = stats.avgGlobal;
+  const banda = _ruidoBanda(db);
+  const pct   = _ruidoPercentil(db);
+  const p     = entry.feature.properties;
+  const oid   = p.owner_id ?? '';
+  const dia   = p.dia ?? '';
+  const mes   = p.mes ?? '';
+  const personas = _ruidoGetPersonasAlcanzadas(entry);
+
+  // Gradiente de la barra de bandas para el track del percentil
+  const bandGrad = RUIDO_BANDAS.map((b, i) => {
+    const pctStart = (i / RUIDO_BANDAS.length * 100).toFixed(0);
+    return `${b.color} ${pctStart}%`;
+  }).join(',');
+
+  // Desglose por hora (plegado, detalle técnico)
+  const validHoras = stats.porHora.filter(h => h.avgDb != null);
+  const minH = validHoras.length ? validHoras.reduce((a, b) => a.avgDb < b.avgDb ? a : b) : null;
+  const maxH = validHoras.length ? validHoras.reduce((a, b) => a.avgDb > b.avgDb ? a : b) : null;
+
+  const horasHtml = stats.porHora.map(h => {
+    const norm  = h.avgDb != null ? Math.max(0, Math.min(1, (h.avgDb - _ruidoMinDb) / Math.max(_ruidoMaxDb - _ruidoMinDb, 1))) : 0;
+    const color = h.avgDb != null ? _ruidoCssColor(norm, 0.9) : 'var(--border)';
+    const txt   = h.avgDb != null ? `${h.avgDb.toFixed(1)} dB(A)` : 'sin datos';
+    return `<li style="display:flex;align-items:center;gap:8px;font-family:'Syne Mono',monospace;font-size:10px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="width:34px;color:var(--muted)">${String(h.hour).padStart(2,'0')}:00</span>
+      <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>
+      <span style="color:var(--ink)">${txt}</span>
+    </li>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <!-- Contexto -->
+    <div style="font-family:'Syne Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:14px;letter-spacing:0.04em">
+      Camión ${oid} · Día ${dia}${mes ? ' · Mes ' + mes : ''}
+    </div>
+
+    <!-- ① Personas alcanzadas -->
+    <div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+      <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;
+                   background:var(--ink);color:var(--bg);font-family:'Syne',sans-serif;font-size:11px;
+                   font-weight:700;display:flex;align-items:center;justify-content:center">1</span>
+      ${personas ? `
+        <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:36px;line-height:1.05;color:var(--ink)">
+          ≈ ${personas.R.toLocaleString()} <span style="font-size:14px;font-weight:600;color:var(--muted)">personas</span>
+        </div>
+        <div style="font-family:'Syne',sans-serif;font-size:11px;color:var(--muted);margin-top:2px">
+          alcanzadas por el ruido de este recorrido
+        </div>
+        <div style="font-family:'Syne',sans-serif;font-size:12px;margin-top:6px;color:var(--ink)">
+          de ellas, <strong style="color:#E03131">≈ ${personas.R_v.toLocaleString()} vulnerables</strong>
+        </div>
+      ` : `
+        <div style="font-family:'Syne Mono',monospace;font-size:10px;color:var(--muted);padding:8px 0">
+          Sin datos de personas para este camión en este período
+        </div>
+      `}
+    </div>
+
+    <!-- ② Banda de ruido -->
+    <div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+      <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;
+                   background:var(--ink);color:var(--bg);font-family:'Syne',sans-serif;font-size:11px;
+                   font-weight:700;display:flex;align-items:center;justify-content:center">2</span>
+      <div style="background:${banda.color};border-radius:8px;padding:12px 14px;color:#fff;
+                  display:flex;align-items:center;justify-content:space-between;margin-top:4px">
+        <div>
+          <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:17px;letter-spacing:0.5px">
+            ${banda.label.toUpperCase()}
+          </div>
+          <div style="font-family:'Syne',sans-serif;font-size:11px;opacity:0.9;margin-top:2px">
+            como ${banda.ref}
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:'Syne',sans-serif;font-size:18px;font-weight:700">${db.toFixed(1)}</div>
+          <div style="font-size:9px;letter-spacing:1px;opacity:0.85">dB(A)</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ③ Posición en la RM -->
+    ${pct != null ? `
+    <div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+      <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;
+                   background:var(--ink);color:var(--bg);font-family:'Syne',sans-serif;font-size:11px;
+                   font-weight:700;display:flex;align-items:center;justify-content:center">3</span>
+      <div style="font-family:'Syne',sans-serif;font-size:12px;color:var(--ink);margin-top:4px;margin-bottom:8px">
+        Más ruidoso que el <strong>${pct}%</strong> de la Región Metropolitana
+      </div>
+      <div style="position:relative;height:10px;border-radius:6px;
+                  background:linear-gradient(90deg,${bandGrad})">
+        <div style="position:absolute;top:-4px;left:${pct}%;transform:translateX(-50%);
+                    width:3px;height:18px;background:var(--ink);border-radius:2px;
+                    box-shadow:0 0 0 2px #fff"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-family:'Syne Mono',monospace;
+                  font-size:9px;color:var(--muted);margin-top:5px">
+        <span>silencioso</span><span>ruidoso</span>
+      </div>
+    </div>` : ''}
+
+    <!-- ④ Referencia OMS -->
+    <div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+      <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;
+                   background:var(--ink);color:var(--bg);font-family:'Syne',sans-serif;font-size:11px;
+                   font-weight:700;display:flex;align-items:center;justify-content:center">4</span>
+      <div style="font-family:'Syne',sans-serif;font-size:12px;color:#374151;
+                  background:#F1F4F8;border-radius:8px;padding:10px 12px;margin-top:4px">
+        <strong style="color:var(--ink)">Umbral de salud OMS (tráfico): ${RUIDO_OMS_DB} dB.</strong>
+        Este recorrido lo supera${pct != null ? `, igual que el ${pct}% de la RM` : ''}.
+        <span style="color:var(--muted)"> (La OMS usa un promedio diario a fachada; es una referencia, no una comparación exacta.)</span>
+      </div>
+    </div>
+
+    <!-- Escala de bandas -->
+    <div style="margin-bottom:16px">
+      <div style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.1em;
+                  text-transform:uppercase;color:var(--muted);margin-bottom:8px">Escala de bandas</div>
+      ${RUIDO_BANDAS.map(b => `
+        <div style="display:flex;align-items:center;gap:8px;font-family:'Syne',sans-serif;
+                    font-size:11px;padding:3px 0;color:#374151">
+          <span style="width:13px;height:13px;border-radius:3px;background:${b.color};flex:0 0 auto"></span>
+          <span>${b.label}</span>
+          <span style="color:var(--muted);font-size:10px">${b.min}${b.max < 999 ? '–' + b.max : '+'}dB</span>
+        </div>`).join('')}
+    </div>
+
+    <!-- Detalle técnico por hora (plegado) -->
+    ${validHoras.length ? `
+    <details style="margin-top:4px">
+      <summary style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.08em;
+                      text-transform:uppercase;color:var(--muted);cursor:pointer;user-select:none;
+                      list-style:none;display:flex;align-items:center;gap:6px">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+             style="width:11px;height:11px"><path d="M4 6l4 4 4-4"/></svg>
+        Detalle técnico por hora
+        ${minH ? `· ${String(minH.hour).padStart(2,'0')}h–${String(maxH.hour).padStart(2,'0')}h` : ''}
+      </summary>
+      <ol style="list-style:none;margin:8px 0 0 0;padding:0">${horasHtml}</ol>
+    </details>` : ''}
+  `;
+}
 
 function _ruidoCalcularEstadisticas(entry) {
   if (!_ruidoLoaded || !_ruidoByHour || !_ruidoVentanaPorHora) return null;
@@ -698,7 +945,11 @@ async function ruidoOnTabEnter() {
   ruidoInitMap();
   setTimeout(() => _ruidoMap && _ruidoMap.invalidateSize(), 80);
 
-  const ok = await ruidoEnsureLoaded();
+  // Cargar ambos CSVs en paralelo
+  const [ok] = await Promise.all([
+    ruidoEnsureLoaded(),
+    _ruidoEnsureCamionLoaded(),
+  ]);
   if (ok) _ruidoUpdateLegend();
 
   // Resolver la ruta única activa con la MISMA lógica que applyFilters():
