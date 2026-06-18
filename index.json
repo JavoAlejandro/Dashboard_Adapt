@@ -1,0 +1,203 @@
+{
+  "modo": "mezclado",
+  "archivos_mezclados": [
+    {
+      "id": "rutas_1",
+      "label": "Archivo 1",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_2",
+      "label": "Archivo 2",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_3",
+      "label": "Archivo 3",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_4",
+      "label": "Archivo 4",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_5",
+      "label": "Archivo 5",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_6",
+      "label": "Archivo 6",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_7",
+      "label": "Archivo 7",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_8",
+      "label": "Archivo 8",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_9",
+      "label": "Archivo 9",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_10",
+      "label": "Archivo 10",
+      "tiene_impactos": true
+    },
+    { "id": "rutas_10_parte1", "label": "Archivo 10 — Parte 1/8", "tiene_impactos": true },
+    { "id": "rutas_10_parte2", "label": "Archivo 10 — Parte 2/8", "tiene_impactos": true },
+    { "id": "rutas_10_parte3", "label": "Archivo 10 — Parte 2/8", "tiene_impactos": true },
+    { "id": "rutas_10_parte4", "label": "Archivo 10 — Parte 2/8", "tiene_impactos": true },
+    { "id": "rutas_10_parte5", "label": "Archivo 10 — Parte 2/8", "tiene_impactos": true },
+    { "id": "rutas_10_parte6", "label": "Archivo 10 — Parte 2/8", "tiene_impactos": true },
+    { "id": "rutas_10_parte7", "label": "Archivo 10 — Parte 2/8", "tiene_impactos": true },
+    { "id": "rutas_10_parte8", "label": "Archivo 10 — Parte 2/8", "tiene_impactos": true },
+    {
+      "id": "rutas_11",
+      "label": "Archivo 11",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_12",
+      "label": "Archivo 12",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_13",
+      "label": "Archivo 13",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_14",
+      "label": "Archivo 14",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_15",
+      "label": "Archivo 15",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_16",
+      "label": "Archivo 16",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_17",
+      "label": "Archivo 17",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_18",
+      "label": "Archivo 18",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_19",
+      "label": "Archivo 19",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_20",
+      "label": "Archivo 20",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_21",
+      "label": "Archivo 21",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_22",
+      "label": "Archivo 22",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_23",
+      "label": "Archivo 23",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_24",
+      "label": "Archivo 24",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_25",
+      "label": "Archivo 25",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_26",
+      "label": "Archivo 26",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_27",
+      "label": "Archivo 27",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_28",
+      "label": "Archivo 28",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_29",
+      "label": "Archivo 29",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_30",
+      "label": "Archivo 30",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_31",
+      "label": "Archivo 31",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_32",
+      "label": "Archivo 32",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_33",
+      "label": "Archivo 33",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_34",
+      "label": "Archivo 34",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_35",
+      "label": "Archivo 35",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_36",
+      "label": "Archivo 36",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_37",
+      "label": "Archivo 37",
+      "tiene_impactos": true
+    },
+    {
+      "id": "rutas_38",
+      "label": "Archivo 38",
+      "tiene_impactos": true
+    }
+  ]
+}
