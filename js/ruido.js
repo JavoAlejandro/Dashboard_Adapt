@@ -357,7 +357,7 @@ function ruidoSetRadioKm(km) {
 // ─── DATOS DE CAMIÓN HORA (segundo CSV, lazy) ─────────────────────────────────
 // ruido/camion_hora_rm.csv → R, R_v por account_id × owner_id × arc_id × hour
 // Se carga la primera vez que se necesita (al renderizar el panel de stats).
-let _camionData      = null;   // Map<owner_id, Map<hour, {R, R_v}>> — sumados por hora
+let _camionData      = null;   // Map<owner_id, Map<h3_index, Set<hour>>> — hexágonos y horas del camión
 let _camionLoaded    = false;
 let _camionLoading   = false;
 
@@ -371,16 +371,18 @@ async function _ruidoEnsureCamionLoaded() {
       Papa.parse(csvText, {
         header: true, dynamicTyping: true, skipEmptyLines: true,
         complete({ data: rows }) {
-          // Agregar R y R_v por owner_id × hour (sumando todos los arcos)
+          // Indexar por owner_id → h3_index → Set<hour>
+          // Así sabemos qué hexágonos recorrió cada camión y en qué horas
           _camionData = new Map();
           rows.forEach(r => {
-            const oid  = String(r.owner_id  ?? '');
-            const hour = Math.round(+r.hour);
-            if (!oid || isNaN(hour)) return;
+            const oid   = String(r.owner_id ?? '');
+            const h3    = String(r.h3_index ?? '');
+            const hour  = Math.round(+r.hour);
+            if (!oid || !h3 || isNaN(hour)) return;
             if (!_camionData.has(oid)) _camionData.set(oid, new Map());
-            const hMap = _camionData.get(oid);
-            const prev = hMap.get(hour) || { R: 0, R_v: 0 };
-            hMap.set(hour, { R: prev.R + (+r.R || 0), R_v: prev.R_v + (+r.R_v || 0) });
+            const hexMap = _camionData.get(oid);
+            if (!hexMap.has(h3)) hexMap.set(h3, new Set());
+            hexMap.get(h3).add(hour);
           });
           _camionLoaded  = true;
           _camionLoading = false;
@@ -395,27 +397,59 @@ async function _ruidoEnsureCamionLoaded() {
   }
 }
 
-// Obtiene R y R_v totales del camión sumando todas las horas del recorrido.
+// Calcula personas alcanzadas usando la lógica correcta:
+// - Para cada hexágono único recorrido por el camión en las horas del recorrido activo
+// - Tomar el P máximo de las horas en que pasó (solo horas 7-22)
+// - Sumar esos máximos — cada hexágono se cuenta UNA SOLA VEZ
+// Fuente: cruce camion_hora_rm (h3_index + hour del camión) × hexagonos_hora_rm (P, P_v)
 function _ruidoGetPersonasAlcanzadas(entry) {
-  if (!_camionData) return null;
-  const oid  = String(entry.feature.properties.owner_id ?? '');
-  const hMap = _camionData.get(oid);
-  if (!hMap) return null;
+  if (!_camionData || !_ruidoByHour) return null;
+  const oid    = String(entry.feature.properties.owner_id ?? '');
+  const hexMap = _camionData.get(oid);
+  if (!hexMap) return null;
 
-  // Horas que cubre la ruta
+  // Horas que cubre esta ruta específica (del coord_timestamps)
   const ts = entry.feature.properties.coord_timestamps || [];
   const horasRuta = new Set();
   ts.forEach(t => {
     const m = t && String(t).match(/^(\d{1,2}):/);
-    if (m) horasRuta.add(parseInt(m[1], 10));
+    if (m) {
+      const h = parseInt(m[1], 10);
+      if (h >= 7 && h <= 22) horasRuta.add(h);  // solo ventana con datos de P
+    }
+  });
+  if (horasRuta.size === 0) return null;
+
+  let totalP = 0, totalPv = 0;
+
+  // Para cada hexágono único del camión
+  hexMap.forEach((horasCamion, h3) => {
+    // Intersectar con las horas de esta ruta Y solo horas con datos de P (7-22)
+    const horasValidas = [];
+    horasCamion.forEach(h => {
+      if (horasRuta.has(h) && h >= 7 && h <= 22) horasValidas.push(h);
+    });
+    if (horasValidas.length === 0) return;
+
+    // Buscar el P máximo en las horas válidas para este hexágono
+    let maxP = 0, maxPv = 0;
+    horasValidas.forEach(h => {
+      const hexData = _ruidoByHour.get(h);
+      if (!hexData) return;
+      const row = hexData.get(h3);
+      if (!row) return;
+      const P  = +row.P  || 0;
+      const Pv = +row.P_v || 0;
+      if (P  > maxP)  maxP  = P;
+      if (Pv > maxPv) maxPv = Pv;
+    });
+
+    // Sumar el máximo de este hexágono (contado una sola vez)
+    totalP  += maxP;
+    totalPv += maxPv;
   });
 
-  let totalR = 0, totalRv = 0;
-  horasRuta.forEach(h => {
-    const d = hMap.get(h);
-    if (d) { totalR += d.R; totalRv += d.R_v; }
-  });
-  return totalR > 0 ? { R: Math.round(totalR), R_v: Math.round(totalRv) } : null;
+  return totalP > 0 ? { R: Math.round(totalP), R_v: Math.round(totalPv) } : null;
 }
 
 // ─── PERCENTIL EN LA RM (calculado una sola vez tras cargar hexágonos_hora) ───
