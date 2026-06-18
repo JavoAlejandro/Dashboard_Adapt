@@ -223,6 +223,9 @@ function ruidoSyncRoute(busId) {
 
   // Precalcular hexágonos dentro del radio de la ruta (corredor de ruido relevante)
   if (_ruidoLoaded) {
+    // Renderizar panel inmediatamente (sin ventana como fallback)
+    _ruidoRenderStatsPanel(entry);
+    // Luego calcular ventana y re-renderizar con valores precisos por tramo horario
     _ruidoComputarVentana(entry);
     _ruidoRenderStatsPanel(entry);
   } else {
@@ -603,9 +606,8 @@ function _ruidoRenderStatsPanel(entry) {
 }
 
 function _ruidoCalcularEstadisticas(entry) {
-  if (!_ruidoLoaded || !_ruidoByHour || !_ruidoVentanaPorHora) return null;
+  if (!_ruidoLoaded || !_ruidoByHour) return null;
 
-  // Determinar qué horas cubre la ruta, leyendo coord_timestamps
   const ts = entry.feature.properties.coord_timestamps || [];
   const horasRuta = new Set();
   ts.forEach(t => {
@@ -616,20 +618,21 @@ function _ruidoCalcularEstadisticas(entry) {
 
   if (horasRuta.size === 0) return null;
 
-  // Para cada hora del recorrido, promediar dB SOLO de los hexágonos
-  // que están dentro del radio respecto a los pings de ESA hora específica.
   const porHora = [];
   let sumaTotal = 0, nTotal = 0;
 
   Array.from(horasRuta).sort((a, b) => a - b).forEach(hour => {
     const hexMapFull  = _ruidoByHour.get(hour);
-    const ventanaHora = _ruidoVentanaPorHora.get(hour);
+    // Si _ruidoVentanaPorHora existe y tiene datos para esta hora → filtrar
+    // Si no → usar TODOS los hexágonos de esta hora (fallback sin ventana)
+    const ventanaHora = _ruidoVentanaPorHora?.get(hour);
+    const usarVentana = ventanaHora && ventanaHora.size > 0;
 
-    if (!hexMapFull || !ventanaHora) { porHora.push({ hour, avgDb: null, nHex: 0 }); return; }
+    if (!hexMapFull) { porHora.push({ hour, avgDb: null, nHex: 0 }); return; }
 
     const dbVals = [];
     hexMapFull.forEach((row, hexId) => {
-      if (ventanaHora.has(hexId)) {
+      if (!usarVentana || ventanaHora.has(hexId)) {
         const db = +row.L_rec_dB;
         if (!isNaN(db)) dbVals.push(db);
       }
@@ -945,29 +948,31 @@ async function ruidoOnTabEnter() {
   ruidoInitMap();
   setTimeout(() => _ruidoMap && _ruidoMap.invalidateSize(), 80);
 
-  // Cargar ambos CSVs en paralelo
+  const targetId = _ruidoResolveSingleId();
+
+  // Mostrar mapa y ruta inmediatamente (sin esperar los CSVs)
+  if (targetId) {
+    ruidoSyncRoute(targetId);
+  } else {
+    document.getElementById('map-ruido-empty').style.display = 'flex';
+    document.getElementById('map-ruido-wrap').style.display  = 'none';
+    const note = document.getElementById('ruido-anim-note');
+    if (note) note.textContent = 'Selecciona un camión específico en la pestaña Exposición (Camión + Mes + Día)';
+  }
+
+  // Cargar ambos CSVs en paralelo (puede tardar unos segundos la primera vez)
   const [ok] = await Promise.all([
     ruidoEnsureLoaded(),
     _ruidoEnsureCamionLoaded(),
   ]);
   if (ok) _ruidoUpdateLegend();
 
-  // Resolver la ruta única activa con la MISMA lógica que applyFilters():
-  // combinando empresa + camión + mes + día (no solo el selector de camión).
-  const targetId = _ruidoResolveSingleId();
-
-  if (targetId) {
-    ruidoSyncRoute(targetId);
-    if (ok && gpsLayers[targetId]) {
-      _ruidoComputarVentana(gpsLayers[targetId]);
-      _ruidoRenderStatsPanel(gpsLayers[targetId]);
-    }
-  } else {
-    // Ningún filtro resuelve a una sola ruta — no hay nada específico que mostrar
-    document.getElementById('map-ruido-empty').style.display = 'flex';
-    document.getElementById('map-ruido-wrap').style.display  = 'none';
-    const note = document.getElementById('ruido-anim-note');
-    if (note) note.textContent = 'Selecciona un camión específico en la pestaña Exposición (Camión + Mes + Día)';
+  // Con ambos CSVs listos, calcular ventana y renderizar panel completo
+  if (targetId && ok && gpsLayers[targetId]) {
+    _ruidoComputarVentana(gpsLayers[targetId]);
+    _ruidoRenderStatsPanel(gpsLayers[targetId]);
+    // Pintar hexágonos de la hora inicial
+    _ruidoPaintForPoint(gpsLayers[targetId], 0);
   }
 }
 
