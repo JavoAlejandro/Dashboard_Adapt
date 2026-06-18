@@ -461,149 +461,102 @@ function _ruidoRenderStatsPanel(entry) {
   if (!stats || stats.avgGlobal == null) { panel.style.display = 'none'; return; }
   panel.style.display = 'flex';
 
-  const db    = stats.avgGlobal;
-  const banda = _ruidoBanda(db);
-  const pct   = _ruidoPercentil(db);
-  const p     = entry.feature.properties;
-  const oid   = p.owner_id ?? '';
-  const dia   = p.dia ?? '';
-  const mes   = p.mes ?? '';
+  const db       = stats.avgGlobal;
+  const banda    = _ruidoBanda(db);
+  const pct      = _ruidoPercentil(db);
+  const p        = entry.feature.properties;
+  const oid      = p.owner_id != null ? p.owner_id : '';
+  const dia      = p.dia      != null ? p.dia      : '';
+  const mes      = p.mes      != null ? p.mes      : '';
   const personas = _ruidoGetPersonasAlcanzadas(entry);
-
-  // Gradiente de la barra de bandas para el track del percentil
-  const bandGrad = RUIDO_BANDAS.map((b, i) => {
-    const pctStart = (i / RUIDO_BANDAS.length * 100).toFixed(0);
-    return `${b.color} ${pctStart}%`;
+  const bandGrad = RUIDO_BANDAS.map(function(b, i) {
+    return b.color + ' ' + (i / RUIDO_BANDAS.length * 100).toFixed(0) + '%';
   }).join(',');
+  const validHoras = stats.porHora.filter(function(h) { return h.avgDb != null; });
+  const minH = validHoras.length ? validHoras.reduce(function(a, b) { return a.avgDb < b.avgDb ? a : b; }) : null;
+  const maxH = validHoras.length ? validHoras.reduce(function(a, b) { return a.avgDb > b.avgDb ? a : b; }) : null;
+  const range = Math.max(_ruidoMaxDb - _ruidoMinDb, 1);
 
-  // Desglose por hora (plegado, detalle técnico)
-  const validHoras = stats.porHora.filter(h => h.avgDb != null);
-  const minH = validHoras.length ? validHoras.reduce((a, b) => a.avgDb < b.avgDb ? a : b) : null;
-  const maxH = validHoras.length ? validHoras.reduce((a, b) => a.avgDb > b.avgDb ? a : b) : null;
+  let html = '';
 
-  const horasHtml = stats.porHora.map(h => {
-    const norm  = h.avgDb != null ? Math.max(0, Math.min(1, (h.avgDb - _ruidoMinDb) / Math.max(_ruidoMaxDb - _ruidoMinDb, 1))) : 0;
-    const color = h.avgDb != null ? _ruidoCssColor(norm, 0.9) : 'var(--border)';
-    const txt   = h.avgDb != null ? `${h.avgDb.toFixed(1)} dB(A)` : 'sin datos';
-    return `<li style="display:flex;align-items:center;gap:8px;font-family:'Syne Mono',monospace;font-size:10px;padding:4px 0;border-bottom:1px solid var(--border)">
-      <span style="width:34px;color:var(--muted)">${String(h.hour).padStart(2,'0')}:00</span>
-      <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>
-      <span style="color:var(--ink)">${txt}</span>
-    </li>`;
-  }).join('');
+  // Contexto
+  html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);margin-bottom:14px;letter-spacing:0.04em">';
+  html += 'Camión ' + oid + ' · Día ' + dia + (mes ? ' · Mes ' + mes : '') + '</div>';
 
-  panel.innerHTML = `
-    <!-- Contexto -->
-    <div style="font-family:'Syne Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:14px;letter-spacing:0.04em">
-      Camión ${oid} · Día ${dia}${mes ? ' · Mes ' + mes : ''}
-    </div>
+  // ① Personas alcanzadas
+  html += '<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">';
+  html += '<span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">1</span>';
+  if (personas) {
+    html += '<div style="font-family:Syne,sans-serif;font-weight:800;font-size:36px;line-height:1.05;color:var(--ink)">&#8776; ' + personas.R.toLocaleString() + ' <span style="font-size:14px;font-weight:600;color:var(--muted)">personas</span></div>';
+    html += '<div style="font-family:Syne,sans-serif;font-size:11px;color:var(--muted);margin-top:2px">alcanzadas por el ruido de este recorrido</div>';
+    html += '<div style="font-family:Syne,sans-serif;font-size:12px;margin-top:6px;color:var(--ink)">de ellas, <strong style="color:#E03131">&#8776; ' + personas.R_v.toLocaleString() + ' vulnerables</strong></div>';
+  } else {
+    html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);padding:8px 0">Sin datos de personas para este camión</div>';
+  }
+  html += '</div>';
 
-    <!-- ① Personas alcanzadas -->
-    <div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
-      <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;
-                   background:var(--ink);color:var(--bg);font-family:'Syne',sans-serif;font-size:11px;
-                   font-weight:700;display:flex;align-items:center;justify-content:center">1</span>
-      ${personas ? `
-        <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:36px;line-height:1.05;color:var(--ink)">
-          ≈ ${personas.R.toLocaleString()} <span style="font-size:14px;font-weight:600;color:var(--muted)">personas</span>
-        </div>
-        <div style="font-family:'Syne',sans-serif;font-size:11px;color:var(--muted);margin-top:2px">
-          alcanzadas por el ruido de este recorrido
-        </div>
-        <div style="font-family:'Syne',sans-serif;font-size:12px;margin-top:6px;color:var(--ink)">
-          de ellas, <strong style="color:#E03131">≈ ${personas.R_v.toLocaleString()} vulnerables</strong>
-        </div>
-      ` : `
-        <div style="font-family:'Syne Mono',monospace;font-size:10px;color:var(--muted);padding:8px 0">
-          Sin datos de personas para este camión en este período
-        </div>
-      `}
-    </div>
+  // ② Banda de ruido
+  html += '<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">';
+  html += '<span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">2</span>';
+  html += '<div style="background:' + banda.color + ';border-radius:8px;padding:12px 14px;color:#fff;display:flex;align-items:center;justify-content:space-between;margin-top:4px">';
+  html += '<div><div style="font-family:Syne,sans-serif;font-weight:800;font-size:17px;letter-spacing:0.5px">' + banda.label.toUpperCase() + '</div>';
+  html += '<div style="font-family:Syne,sans-serif;font-size:11px;opacity:0.9;margin-top:2px">como ' + banda.ref + '</div></div>';
+  html += '<div style="text-align:right"><div style="font-family:Syne,sans-serif;font-size:18px;font-weight:700">' + db.toFixed(1) + '</div>';
+  html += '<div style="font-size:9px;letter-spacing:1px;opacity:0.85">dB(A)</div></div></div></div>';
 
-    <!-- ② Banda de ruido -->
-    <div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
-      <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;
-                   background:var(--ink);color:var(--bg);font-family:'Syne',sans-serif;font-size:11px;
-                   font-weight:700;display:flex;align-items:center;justify-content:center">2</span>
-      <div style="background:${banda.color};border-radius:8px;padding:12px 14px;color:#fff;
-                  display:flex;align-items:center;justify-content:space-between;margin-top:4px">
-        <div>
-          <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:17px;letter-spacing:0.5px">
-            ${banda.label.toUpperCase()}
-          </div>
-          <div style="font-family:'Syne',sans-serif;font-size:11px;opacity:0.9;margin-top:2px">
-            como ${banda.ref}
-          </div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-family:'Syne',sans-serif;font-size:18px;font-weight:700">${db.toFixed(1)}</div>
-          <div style="font-size:9px;letter-spacing:1px;opacity:0.85">dB(A)</div>
-        </div>
-      </div>
-    </div>
+  // ③ Posición en la RM
+  if (pct != null) {
+    html += '<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">';
+    html += '<span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">3</span>';
+    html += '<div style="font-family:Syne,sans-serif;font-size:12px;color:var(--ink);margin-top:4px;margin-bottom:8px">Más ruidoso que el <strong>' + pct + '%</strong> de la Región Metropolitana</div>';
+    html += '<div style="position:relative;height:10px;border-radius:6px;background:linear-gradient(90deg,' + bandGrad + ')">';
+    html += '<div style="position:absolute;top:-4px;left:' + pct + '%;transform:translateX(-50%);width:3px;height:18px;background:var(--ink);border-radius:2px;box-shadow:0 0 0 2px #fff"></div></div>';
+    html += '<div style="display:flex;justify-content:space-between;font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);margin-top:5px"><span>silencioso</span><span>ruidoso</span></div>';
+    html += '</div>';
+  }
 
-    <!-- ③ Posición en la RM -->
-    ${pct != null ? `
-    <div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
-      <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;
-                   background:var(--ink);color:var(--bg);font-family:'Syne',sans-serif;font-size:11px;
-                   font-weight:700;display:flex;align-items:center;justify-content:center">3</span>
-      <div style="font-family:'Syne',sans-serif;font-size:12px;color:var(--ink);margin-top:4px;margin-bottom:8px">
-        Más ruidoso que el <strong>${pct}%</strong> de la Región Metropolitana
-      </div>
-      <div style="position:relative;height:10px;border-radius:6px;
-                  background:linear-gradient(90deg,${bandGrad})">
-        <div style="position:absolute;top:-4px;left:${pct}%;transform:translateX(-50%);
-                    width:3px;height:18px;background:var(--ink);border-radius:2px;
-                    box-shadow:0 0 0 2px #fff"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-family:'Syne Mono',monospace;
-                  font-size:9px;color:var(--muted);margin-top:5px">
-        <span>silencioso</span><span>ruidoso</span>
-      </div>
-    </div>` : ''}
+  // ④ Referencia OMS
+  html += '<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">';
+  html += '<span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">4</span>';
+  html += '<div style="font-family:Syne,sans-serif;font-size:12px;color:#374151;background:#F1F4F8;border-radius:8px;padding:10px 12px;margin-top:4px">';
+  html += '<strong style="color:var(--ink)">Umbral de salud OMS (tráfico): ' + RUIDO_OMS_DB + ' dB.</strong> ';
+  html += 'Este recorrido lo supera' + (pct != null ? ', igual que el ' + pct + '% de la RM' : '') + '. ';
+  html += '<span style="color:var(--muted)">(La OMS usa un promedio diario a fachada; es una referencia, no una comparación exacta.)</span></div></div>';
 
-    <!-- ④ Referencia OMS -->
-    <div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
-      <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;
-                   background:var(--ink);color:var(--bg);font-family:'Syne',sans-serif;font-size:11px;
-                   font-weight:700;display:flex;align-items:center;justify-content:center">4</span>
-      <div style="font-family:'Syne',sans-serif;font-size:12px;color:#374151;
-                  background:#F1F4F8;border-radius:8px;padding:10px 12px;margin-top:4px">
-        <strong style="color:var(--ink)">Umbral de salud OMS (tráfico): ${RUIDO_OMS_DB} dB.</strong>
-        Este recorrido lo supera${pct != null ? `, igual que el ${pct}% de la RM` : ''}.
-        <span style="color:var(--muted)"> (La OMS usa un promedio diario a fachada; es una referencia, no una comparación exacta.)</span>
-      </div>
-    </div>
+  // Escala de bandas
+  html += '<div style="margin-bottom:16px">';
+  html += '<div style="font-family:Syne Mono,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Escala de bandas</div>';
+  RUIDO_BANDAS.forEach(function(b) {
+    html += '<div style="display:flex;align-items:center;gap:8px;font-family:Syne,sans-serif;font-size:11px;padding:3px 0;color:#374151">';
+    html += '<span style="width:13px;height:13px;border-radius:3px;background:' + b.color + ';flex:0 0 auto"></span>';
+    html += '<span>' + b.label + '</span>';
+    html += '<span style="color:var(--muted);font-size:10px">' + b.min + (b.max < 999 ? ('\u2013' + b.max) : '+') + ' dB</span></div>';
+  });
+  html += '</div>';
 
-    <!-- Escala de bandas -->
-    <div style="margin-bottom:16px">
-      <div style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.1em;
-                  text-transform:uppercase;color:var(--muted);margin-bottom:8px">Escala de bandas</div>
-      ${RUIDO_BANDAS.map(b => `
-        <div style="display:flex;align-items:center;gap:8px;font-family:'Syne',sans-serif;
-                    font-size:11px;padding:3px 0;color:#374151">
-          <span style="width:13px;height:13px;border-radius:3px;background:${b.color};flex:0 0 auto"></span>
-          <span>${b.label}</span>
-          <span style="color:var(--muted);font-size:10px">${b.min}${b.max < 999 ? '–' + b.max : '+'}dB</span>
-        </div>`).join('')}
-    </div>
+  // Detalle técnico por hora (plegado)
+  if (validHoras.length) {
+    html += '<details style="margin-top:4px">';
+    html += '<summary style="font-family:Syne Mono,monospace;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);cursor:pointer;user-select:none;list-style:none;display:flex;align-items:center;gap:6px">';
+    html += '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px"><path d="M4 6l4 4 4-4"/></svg>';
+    html += 'Detalle técnico por hora';
+    if (minH) html += ' \u00b7 ' + String(minH.hour).padStart(2,'0') + 'h\u2013' + String(maxH.hour).padStart(2,'0') + 'h';
+    html += '</summary><ol style="list-style:none;margin:8px 0 0 0;padding:0">';
+    stats.porHora.forEach(function(h) {
+      var norm  = h.avgDb != null ? Math.max(0, Math.min(1, (h.avgDb - _ruidoMinDb) / range)) : 0;
+      var color = h.avgDb != null ? _ruidoCssColor(norm, 0.9) : 'var(--border)';
+      var txt   = h.avgDb != null ? h.avgDb.toFixed(1) + ' dB(A)' : 'sin datos';
+      html += '<li style="display:flex;align-items:center;gap:8px;font-family:Syne Mono,monospace;font-size:10px;padding:4px 0;border-bottom:1px solid var(--border)">';
+      html += '<span style="width:34px;color:var(--muted)">' + String(h.hour).padStart(2,'0') + ':00</span>';
+      html += '<span style="width:8px;height:8px;border-radius:50%;background:' + color + ';flex-shrink:0"></span>';
+      html += '<span style="color:var(--ink)">' + txt + '</span></li>';
+    });
+    html += '</ol></details>';
+  }
 
-    <!-- Detalle técnico por hora (plegado) -->
-    ${validHoras.length ? `
-    <details style="margin-top:4px">
-      <summary style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.08em;
-                      text-transform:uppercase;color:var(--muted);cursor:pointer;user-select:none;
-                      list-style:none;display:flex;align-items:center;gap:6px">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
-             style="width:11px;height:11px"><path d="M4 6l4 4 4-4"/></svg>
-        Detalle técnico por hora
-        ${minH ? `· ${String(minH.hour).padStart(2,'0')}h–${String(maxH.hour).padStart(2,'0')}h` : ''}
-      </summary>
-      <ol style="list-style:none;margin:8px 0 0 0;padding:0">${horasHtml}</ol>
-    </details>` : ''}
-  `;
+  panel.innerHTML = html;
 }
+
 
 function _ruidoCalcularEstadisticas(entry) {
   if (!_ruidoLoaded || !_ruidoByHour) return null;
@@ -652,86 +605,6 @@ function _ruidoCalcularEstadisticas(entry) {
   return { avgGlobal, porHora, nMuestras: nTotal };
 }
 
-function _ruidoRenderStatsPanel(entry) {
-  const panel = document.getElementById('ruido-side-stats');
-  if (!panel) { console.warn('[RUIDO] ruido-side-stats no encontrado en DOM'); return; }
-
-  const stats = _ruidoCalcularEstadisticas(entry);
-  console.log('[RUIDO] stats:', stats,
-    '| _ruidoLoaded:', _ruidoLoaded,
-    '| _camionLoaded:', _camionLoaded,
-    '| ts sample:', (entry.feature.properties.coord_timestamps || []).slice(0,3),
-    '| ventanaPorHora:', _ruidoVentanaPorHora ? _ruidoVentanaPorHora.size + ' horas' : 'null'
-  );
-
-  if (!stats || stats.avgGlobal == null) {
-    console.warn('[RUIDO] stats null o avgGlobal null — panel oculto');
-    panel.style.display = 'none';
-    return;
-  }
-  panel.style.display = 'flex';
-
-  // Total destacado
-  const avgEl    = document.getElementById('ruido-avg-db');
-  const avgSubEl = document.getElementById('ruido-avg-db-sub');
-  if (avgEl)    avgEl.textContent    = stats.avgGlobal.toFixed(1) + ' dB(A)';
-  if (avgSubEl) avgSubEl.textContent = `Promedio ponderado por tramo horario (${_ruidoRadioKm} km de radio) · ${stats.nMuestras.toLocaleString()} muestras hexágono-hora`;
-
-  // Identidad del camión
-  const p   = entry.feature.properties;
-  const oid = p.owner_id ?? '';
-  const dia = p.dia ?? '';
-  const mes = p.mes ?? '';
-  const titleEl = document.getElementById('ruido-bsp-title');
-  const subEl   = document.getElementById('ruido-bsp-sub');
-  if (titleEl) titleEl.textContent = `Camión ${oid} · Día ${dia}`;
-  if (subEl)   subEl.textContent   = mes ? `Mes ${mes}` : '';
-
-  // Cards: mínimo / máximo del recorrido
-  const validHoras = stats.porHora.filter(h => h.avgDb != null);
-  const cardsEl = document.getElementById('ruido-bsp-cards');
-  if (cardsEl && validHoras.length) {
-    const minH = validHoras.reduce((a, b) => a.avgDb < b.avgDb ? a : b);
-    const maxH = validHoras.reduce((a, b) => a.avgDb > b.avgDb ? a : b);
-    cardsEl.innerHTML = `
-      <div class="gss-card">
-        <div class="gss-card-dot" style="background:#38a169"></div>
-        <span class="gss-card-lbl">Hora más silenciosa</span>
-        <span class="gss-card-val">${String(minH.hour).padStart(2,'0')}h · ${minH.avgDb.toFixed(1)}dB</span>
-      </div>
-      <div class="gss-card">
-        <div class="gss-card-dot" style="background:#c53030"></div>
-        <span class="gss-card-lbl">Hora más ruidosa</span>
-        <span class="gss-card-val">${String(maxH.hour).padStart(2,'0')}h · ${maxH.avgDb.toFixed(1)}dB</span>
-      </div>
-      <div class="gss-card">
-        <div class="gss-card-dot" style="background:var(--accent)"></div>
-        <span class="gss-card-lbl">Horas con datos</span>
-        <span class="gss-card-val">${validHoras.length} / ${stats.porHora.length}</span>
-      </div>`;
-  }
-
-  // Desglose por hora
-  const horasWrap = document.getElementById('ruido-horas-wrap');
-  const horasList = document.getElementById('ruido-horas-list');
-  if (horasWrap && horasList) {
-    if (stats.porHora.length) {
-      horasWrap.style.display = 'block';
-      horasList.innerHTML = stats.porHora.map(h => {
-        const norm  = h.avgDb != null ? Math.max(0, Math.min(1, (h.avgDb - _ruidoMinDb) / Math.max(_ruidoMaxDb - _ruidoMinDb, 1))) : 0;
-        const color = h.avgDb != null ? _ruidoCssColor(norm, 0.9) : 'var(--border)';
-        const txt   = h.avgDb != null ? `${h.avgDb.toFixed(1)} dB(A)` : 'sin datos';
-        return `<li style="display:flex;align-items:center;gap:8px;font-family:'Syne Mono',monospace;font-size:10px;padding:4px 0">
-          <span style="width:34px;color:var(--muted)">${String(h.hour).padStart(2,'0')}:00</span>
-          <span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0"></span>
-          <span style="color:var(--ink)">${txt}</span>
-        </li>`;
-      }).join('');
-    } else {
-      horasWrap.style.display = 'none';
-    }
-  }
-}
 
 // ─── EXTRAER HORA DESDE coord_timestamps (formato "HH:MM") ───────────────────
 function _ruidoHourAtIndex(entry, idx) {
