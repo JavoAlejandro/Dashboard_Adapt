@@ -239,7 +239,7 @@ function ruidoSyncRoute(busId) {
 let _ruidoRouteLayer = null;
 
 // ─── VENTANA DE RADIO ALREDEDOR DE LA RUTA ────────────────────────────────────
-const RUIDO_RADIO_KM_DEFAULT = 1;   // radio en km alrededor de la ruta activa
+const RUIDO_RADIO_KM_DEFAULT = 0.4;   // 400 metros por defecto
 let _ruidoRadioKm        = RUIDO_RADIO_KM_DEFAULT;
 let _ruidoHexEnVentana   = null;    // Set<h3_index> precomputado para la ruta activa
 
@@ -654,10 +654,18 @@ function _ruidoCalcularEstadisticas(entry) {
 
 function _ruidoRenderStatsPanel(entry) {
   const panel = document.getElementById('ruido-side-stats');
-  if (!panel) return;
+  if (!panel) { console.warn('[RUIDO] ruido-side-stats no encontrado en DOM'); return; }
 
   const stats = _ruidoCalcularEstadisticas(entry);
+  console.log('[RUIDO] stats:', stats,
+    '| _ruidoLoaded:', _ruidoLoaded,
+    '| _camionLoaded:', _camionLoaded,
+    '| ts sample:', (entry.feature.properties.coord_timestamps || []).slice(0,3),
+    '| ventanaPorHora:', _ruidoVentanaPorHora ? _ruidoVentanaPorHora.size + ' horas' : 'null'
+  );
+
   if (!stats || stats.avgGlobal == null) {
+    console.warn('[RUIDO] stats null o avgGlobal null — panel oculto');
     panel.style.display = 'none';
     return;
   }
@@ -948,31 +956,43 @@ async function ruidoOnTabEnter() {
   ruidoInitMap();
   setTimeout(() => _ruidoMap && _ruidoMap.invalidateSize(), 80);
 
-  const targetId = _ruidoResolveSingleId();
-
-  // Mostrar mapa y ruta inmediatamente (sin esperar los CSVs)
-  if (targetId) {
-    ruidoSyncRoute(targetId);
+  // Mostrar mapa inmediatamente con lo que haya seleccionado
+  const targetIdInicial = _ruidoResolveSingleId();
+  if (targetIdInicial && gpsLayers[targetIdInicial]) {
+    ruidoSyncRoute(targetIdInicial);
   } else {
     document.getElementById('map-ruido-empty').style.display = 'flex';
     document.getElementById('map-ruido-wrap').style.display  = 'none';
-    const note = document.getElementById('ruido-anim-note');
-    if (note) note.textContent = 'Selecciona un camión específico en la pestaña Exposición (Camión + Mes + Día)';
   }
 
-  // Cargar ambos CSVs en paralelo (puede tardar unos segundos la primera vez)
+  // Cargar ambos CSVs en paralelo
   const [ok] = await Promise.all([
     ruidoEnsureLoaded(),
     _ruidoEnsureCamionLoaded(),
   ]);
   if (ok) _ruidoUpdateLegend();
 
-  // Con ambos CSVs listos, calcular ventana y renderizar panel completo
-  if (targetId && ok && gpsLayers[targetId]) {
-    _ruidoComputarVentana(gpsLayers[targetId]);
-    _ruidoRenderStatsPanel(gpsLayers[targetId]);
-    // Pintar hexágonos de la hora inicial
-    _ruidoPaintForPoint(gpsLayers[targetId], 0);
+  // Resolver de nuevo DESPUÉS del await (el estado puede haber cambiado)
+  // y usar directamente ruidoAnimState.targetId si aún coincide con gpsLayers
+  const finalId = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId]
+    ? ruidoAnimState.targetId
+    : _ruidoResolveSingleId();
+
+  const finalEntry = finalId ? gpsLayers[finalId] : null;
+
+  if (finalEntry && ok) {
+    if (finalId !== ruidoAnimState.targetId) {
+      ruidoSyncRoute(finalId);
+    }
+    _ruidoComputarVentana(finalEntry);
+    _ruidoRenderStatsPanel(finalEntry);
+    _ruidoPaintForPoint(finalEntry, 0);
+  } else if (!finalEntry) {
+    document.getElementById('map-ruido-empty').style.display = 'flex';
+    document.getElementById('map-ruido-wrap').style.display  = 'none';
+    document.getElementById('ruido-side-stats').style.display = 'none';
+    const note = document.getElementById('ruido-anim-note');
+    if (note) note.textContent = 'Selecciona un camión específico en la pestaña Exposición (Camión + Mes + Día)';
   }
 }
 
