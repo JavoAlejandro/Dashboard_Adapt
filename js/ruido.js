@@ -601,25 +601,6 @@ function _ruidoRenderStatsPanel(entry) {
   });
   html += '</div>';
 
-  // Detalle técnico por hora (plegado)
-  if (validHoras.length) {
-    html += '<details style="margin-top:4px">';
-    html += '<summary style="font-family:Syne Mono,monospace;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);cursor:pointer;user-select:none;list-style:none;display:flex;align-items:center;gap:6px">';
-    html += '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:11px;height:11px"><path d="M4 6l4 4 4-4"/></svg>';
-    html += 'Detalle técnico por hora';
-    if (minH) html += ' \u00b7 ' + String(minH.hour).padStart(2,'0') + 'h\u2013' + String(maxH.hour).padStart(2,'0') + 'h';
-    html += '</summary><ol style="list-style:none;margin:8px 0 0 0;padding:0">';
-    stats.porHora.forEach(function(h) {
-      var norm  = h.avgDb != null ? Math.max(0, Math.min(1, (h.avgDb - _ruidoMinDb) / range)) : 0;
-      var color = h.avgDb != null ? _ruidoCssColor(norm, 0.9) : 'var(--border)';
-      var txt   = h.avgDb != null ? h.avgDb.toFixed(1) + ' dB(A)' : 'sin datos';
-      html += '<li style="display:flex;align-items:center;gap:8px;font-family:Syne Mono,monospace;font-size:10px;padding:4px 0;border-bottom:1px solid var(--border)">';
-      html += '<span style="width:34px;color:var(--muted)">' + String(h.hour).padStart(2,'0') + ':00</span>';
-      html += '<span style="width:8px;height:8px;border-radius:50%;background:' + color + ';flex-shrink:0"></span>';
-      html += '<span style="color:var(--ink)">' + txt + '</span></li>';
-    });
-    html += '</ol></details>';
-  }
 
   // ── Velocímetros de KPIs por empresa ──────────────────────────────────────
   html += _ruidoRenderKpiGauges(entry);
