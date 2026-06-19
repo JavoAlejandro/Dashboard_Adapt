@@ -621,9 +621,198 @@ function _ruidoRenderStatsPanel(entry) {
     html += '</ol></details>';
   }
 
+  // ── Velocímetros de KPIs por empresa ──────────────────────────────────────
+  html += _ruidoRenderKpiGauges(entry);
+
   panel.innerHTML = html;
 }
 
+// ─── KPIs POR EMPRESA — VELOCÍMETROS ──────────────────────────────────────────
+// Tres archivos:
+//   dashboard_kpis_referencia.csv → escala de la flota por KPI (percentiles)
+//   dashboard_kpis_empresa.csv    → una fila por account_id, valores actual/ref/delta
+// Cuatro KPIs: AMNI, SSR, PWMNE, VP_PWMNE. En los cuatro, más alto es peor.
+
+const RUIDO_KPI_LIST = ['AMNI', 'SSR', 'PWMNE', 'VP_PWMNE'];
+const RUIDO_KPI_LABELS = {
+  AMNI:      'AMNI',
+  SSR:       'SSR',
+  PWMNE:     'PWMNE',
+  VP_PWMNE:  'VP-PWMNE',
+};
+
+let _kpiRefData    = null;   // Map<kpi, {p10,p25,p50,p75,p90, higherIsWorse}>
+let _kpiEmpresaData = null;  // Map<account_id, {AMNI_actual, AMNI_ref, AMNI_delta, AMNI_actual_pct, ...}>
+let _kpiLoaded     = false;
+let _kpiLoading    = false;
+
+async function _ruidoEnsureKpiLoaded() {
+  if (_kpiLoaded || _kpiLoading) return _kpiLoaded;
+  _kpiLoading = true;
+  try {
+    const [refRes, empRes] = await Promise.all([
+      r2Fetch('ruido/dashboard_kpis_referencia.csv'),
+      r2Fetch('ruido/dashboard_kpis_empresa.csv'),
+    ]);
+    const [refText, empText] = await Promise.all([refRes.text(), empRes.text()]);
+
+    return new Promise(resolve => {
+      let pending = 2;
+      const done = () => { if (--pending === 0) { _kpiLoaded = true; _kpiLoading = false; resolve(true); } };
+
+      Papa.parse(refText, {
+        header: true, dynamicTyping: true, skipEmptyLines: true,
+        complete({ data: rows }) {
+          _kpiRefData = new Map();
+          rows.forEach(r => {
+            const kpi = String(r.kpi ?? '').trim();
+            if (!kpi) return;
+            _kpiRefData.set(kpi, {
+              p25: +r.actual_p25, p50: +r.actual_p50_median, p75: +r.actual_p75,
+              min: +r.actual_min, max: +r.actual_max,
+              higherIsWorse: String(r.higher_is_worse).toLowerCase() === 'true',
+            });
+          });
+          done();
+        },
+        error() { done(); },
+      });
+
+      Papa.parse(empText, {
+        header: true, dynamicTyping: true, skipEmptyLines: true,
+        complete({ data: rows }) {
+          _kpiEmpresaData = new Map();
+          rows.forEach(r => {
+            const aid = String(r.account_id ?? '');
+            if (!aid) return;
+            _kpiEmpresaData.set(aid, r);
+          });
+          done();
+        },
+        error() { done(); },
+      });
+    });
+  } catch {
+    _kpiLoading = false;
+    return false;
+  }
+}
+
+// Convierte un valor en ángulo de aguja, dentro de un arco de -90° a +90°.
+// Escala por percentiles, NO min-max: p50 (mediana) queda exactamente al
+// centro (0°). El tramo [p25,p50] mapea a [-90°,0°], y [p50,p75] a [0°,90°].
+// Valores fuera de [p25,p75] se clampan a los extremos del arco.
+function _ruidoKpiAngulo(valor, ref) {
+  if (valor == null || isNaN(valor) || !ref) return 0;
+  const { p25, p50, p75 } = ref;
+  if (valor <= p25) return -90;
+  if (valor >= p75) return 90;
+  if (valor === p50) return 0;
+  if (valor < p50) {
+    const t = (valor - p25) / Math.max(p50 - p25, 1e-9);
+    return -90 + t * 90;
+  } else {
+    const t = (valor - p50) / Math.max(p75 - p50, 1e-9);
+    return t * 90;
+  }
+}
+
+function _ruidoFmtKpiValor(v) {
+  if (v == null || isNaN(v)) return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (abs >= 10)   return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+// Genera el SVG de un velocímetro individual.
+// Aguja larga = actual. Marca corta punteada = ref. Texto bajo = delta.
+function _ruidoSvgGauge(kpi, empresaRow, ref) {
+  const label    = RUIDO_KPI_LABELS[kpi] || kpi;
+  const actual   = empresaRow ? +empresaRow[kpi + '_actual']     : null;
+  const refVal   = empresaRow ? +empresaRow[kpi + '_ref']        : null;
+  const delta    = empresaRow ? +empresaRow[kpi + '_delta']      : null;
+  const pct      = empresaRow ? empresaRow[kpi + '_actual_pct']  : null;
+
+  const angActual = _ruidoKpiAngulo(actual, ref);
+  const angRef    = _ruidoKpiAngulo(refVal, ref);
+
+  const deltaColor = (delta != null && delta > 0) ? '#c0392b' : (delta != null && delta < 0) ? '#2d7a4f' : 'var(--muted)';
+  const deltaSign  = (delta != null && delta > 0) ? '+' : '';
+
+  let svg = '';
+  svg += '<svg width="100%" viewBox="0 0 200 120" role="img" style="display:block">';
+  svg += '<title>Velocímetro ' + label + (pct != null ? ', percentil ' + Math.round(pct) : '') + '</title>';
+  // Pista de fondo
+  svg += '<path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="var(--border)" stroke-width="14" stroke-linecap="round"/>';
+  // Mitad izquierda (mejor que mediana) y derecha (peor que mediana)
+  svg += '<path d="M 20 100 A 80 80 0 0 1 100 20" fill="none" stroke="#a8d5a8" stroke-width="14"/>';
+  svg += '<path d="M 100 20 A 80 80 0 0 1 180 100" fill="none" stroke="#e8a8a8" stroke-width="14"/>';
+  // Marca de referencia (ref) — línea corta punteada
+  if (refVal != null && !isNaN(refVal)) {
+    svg += '<g transform="rotate(' + angRef.toFixed(1) + ' 100 100)">';
+    svg += '<line x1="100" y1="100" x2="100" y2="32" stroke="var(--ink2)" stroke-width="2" stroke-dasharray="2 2"/>';
+    svg += '</g>';
+  }
+  // Aguja principal (actual)
+  if (actual != null && !isNaN(actual)) {
+    svg += '<g transform="rotate(' + angActual.toFixed(1) + ' 100 100)">';
+    svg += '<line x1="100" y1="100" x2="100" y2="28" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>';
+    svg += '</g>';
+  }
+  svg += '<circle cx="100" cy="100" r="6" fill="var(--ink)"/>';
+  svg += '<text x="100" y="115" text-anchor="middle" font-size="13" font-weight="500" fill="var(--ink)" font-family="Syne,sans-serif">' + _ruidoFmtKpiValor(actual) + '</text>';
+  svg += '</svg>';
+
+  let html = '<div style="background:var(--surface);border-radius:4px;padding:10px">';
+  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">';
+  html += '<span style="font-family:Syne,sans-serif;font-size:11px;font-weight:600;color:var(--ink)">' + label + '</span>';
+  html += '<span style="font-family:Syne Mono,monospace;font-size:9px;color:var(--muted)">' + (pct != null ? 'p' + Math.round(pct) : '—') + '</span>';
+  html += '</div>';
+  html += svg;
+  html += '<div style="display:flex;justify-content:space-between;font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);margin-top:2px">';
+  html += '<span>ref ' + _ruidoFmtKpiValor(refVal) + '</span>';
+  html += '<span style="color:' + deltaColor + '">&Delta; ' + deltaSign + _ruidoFmtKpiValor(delta) + '</span>';
+  html += '</div></div>';
+
+  return html;
+}
+
+// Bloque completo de 4 velocímetros en grilla 2x2, con el account_id de la
+// empresa del camión activo como encabezado.
+function _ruidoRenderKpiGauges(entry) {
+  const aid = String(entry.feature.properties.account_id ?? '');
+  if (!aid) return '';
+
+  let html = '<div style="margin-top:8px;padding-top:20px;border-top:1px solid var(--border)">';
+  html += '<div style="font-family:Syne Mono,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:2px">Empresa</div>';
+
+  if (!_kpiLoaded) {
+    html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);padding:8px 0">Cargando KPIs de empresa…</div></div>';
+    return html;
+  }
+
+  const empresaRow = _kpiEmpresaData ? _kpiEmpresaData.get(aid) : null;
+
+  const nVeh = empresaRow ? empresaRow.n_vehicles : null;
+  html += '<div style="font-family:Syne,sans-serif;font-size:16px;font-weight:700;color:var(--ink);margin-bottom:12px">';
+  html += aid + (nVeh != null ? ' <span style="font-size:11px;font-weight:400;color:var(--muted)">· ' + nVeh + ' vehículos</span>' : '');
+  html += '</div>';
+
+  if (!empresaRow) {
+    html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);padding:8px 0">Sin datos de KPIs para esta empresa</div></div>';
+    return html;
+  }
+
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+  RUIDO_KPI_LIST.forEach(kpi => {
+    const ref = _kpiRefData ? _kpiRefData.get(kpi) : null;
+    html += _ruidoSvgGauge(kpi, empresaRow, ref);
+  });
+  html += '</div></div>';
+
+  return html;
+}
 
 function _ruidoCalcularEstadisticas(entry) {
   if (!_ruidoLoaded || !_ruidoByHour) return null;
@@ -905,7 +1094,7 @@ async function ruidoOnTabEnter() {
     document.getElementById('map-ruido-wrap').style.display  = 'none';
   }
 
-  // Cargar ambos CSVs en paralelo
+  // Cargar CSVs de ruido + camión + KPIs de empresa, todo en paralelo
   const [ok] = await Promise.all([
     ruidoEnsureLoaded(),
     _ruidoEnsureCamionLoaded(),
@@ -934,6 +1123,12 @@ async function ruidoOnTabEnter() {
     const note = document.getElementById('ruido-anim-note');
     if (note) note.textContent = 'Selecciona un camión específico en la pestaña Exposición (Camión + Mes + Día)';
   }
+
+  // Cargar KPIs de empresa de forma independiente (puede tardar un poco más)
+  // y re-renderizar el panel con los velocímetros cuando estén listos.
+  _ruidoEnsureKpiLoaded().then(kpiOk => {
+    if (kpiOk && finalEntry) _ruidoRenderStatsPanel(finalEntry);
+  });
 }
 
 // Replica la resolución de "singleId" de applyFilters() en gps.js, para que
