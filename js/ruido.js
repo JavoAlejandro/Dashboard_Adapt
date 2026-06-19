@@ -401,12 +401,25 @@ async function _ruidoEnsureCamionLoaded() {
   }
 }
 
-// Calcula personas alcanzadas:
+// Modo de cálculo de personas alcanzadas:
+//   'suma'  → suma R/R_v de todas las filas hexágono-hora que pasan el filtro
+//             de hora (exposición acumulada a través de las horas del recorrido)
+//   'dedup' → cada hexágono único cuenta una sola vez, con su R máximo entre
+//             las horas válidas (personas alcanzadas como conjunto único)
+let _ruidoPersonasModo = 'suma';   // default
+
+function ruidoSetPersonasModo(modo) {
+  _ruidoPersonasModo = modo === 'dedup' ? 'dedup' : 'suma';
+  const entry = gpsLayers[ruidoAnimState.targetId];
+  if (entry) _ruidoRenderStatsPanel(entry);
+}
+
+// Calcula personas alcanzadas según _ruidoPersonasModo:
 // 1. Tomar todas las combinaciones h3_index × hour del CSV de camión para este owner
 // 2. Filtrar por horas que cubre ESTA ruta (coord_timestamps) y solo 7-22h
-// 3. Filtrar por ventana geográfica (_ruidoVentanaPorHora) — solo hexágonos
-//    dentro del radio de la ruta en esa hora específica
-// 4. Sumar R y R_v de todas las filas que pasan los filtros (sin deduplicar)
+// 3a. Modo 'suma'  → sumar R/R_v de todas las filas que pasan el filtro de hora
+// 3b. Modo 'dedup' → para cada h3_index único, tomar el R máximo entre sus horas
+//     válidas y sumar esos máximos (cada hexágono cuenta una sola vez)
 function _ruidoGetPersonasAlcanzadas(entry) {
   if (!_camionData) return null;
   const oid     = String(entry.feature.properties.owner_id ?? '');
@@ -426,18 +439,29 @@ function _ruidoGetPersonasAlcanzadas(entry) {
   if (horasRuta.size === 0) return null;
 
   let totalR = 0, totalRv = 0;
-  dataMap.forEach(({ R, R_v, h3, hour }) => {
-    if (!horasRuta.has(hour)) return;
 
-    // Aplicar bounding geográfico si está disponible
-    if (_ruidoVentanaPorHora) {
-      const ventana = _ruidoVentanaPorHora.get(hour);
-      if (ventana && !ventana.has(h3)) return;
-    }
-
-    totalR  += R;
-    totalRv += R_v;
-  });
+  if (_ruidoPersonasModo === 'dedup') {
+    // Dedup por máximo: cada hexágono único cuenta una sola vez
+    const maxPorHex = new Map();   // h3 → { R, R_v } máximos
+    dataMap.forEach(({ R, R_v, h3, hour }) => {
+      if (!horasRuta.has(hour)) return;
+      const prev = maxPorHex.get(h3);
+      if (!prev || R > prev.R) {
+        maxPorHex.set(h3, { R, R_v });
+      }
+    });
+    maxPorHex.forEach(({ R, R_v }) => {
+      totalR  += R;
+      totalRv += R_v;
+    });
+  } else {
+    // Suma simple: exposición acumulada a través de las horas del recorrido
+    dataMap.forEach(({ R, R_v, hour }) => {
+      if (!horasRuta.has(hour)) return;
+      totalR  += R;
+      totalRv += R_v;
+    });
+  }
 
   return totalR > 0 ? { R: Math.round(totalR), R_v: Math.round(totalRv) } : null;
 }
@@ -517,6 +541,14 @@ function _ruidoRenderStatsPanel(entry) {
   } else {
     html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);padding:8px 0">Sin datos de personas para este camión</div>';
   }
+  // Toggle suma / dedup
+  const modoSuma  = _ruidoPersonasModo !== 'dedup';
+  const btnSuma   = 'font-family:Syne Mono,monospace;font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:' + (modoSuma ? 'var(--ink)' : 'transparent') + ';color:' + (modoSuma ? 'var(--bg)' : 'var(--muted)') + '';
+  const btnDedup  = 'font-family:Syne Mono,monospace;font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:' + (!modoSuma ? 'var(--ink)' : 'transparent') + ';color:' + (!modoSuma ? 'var(--bg)' : 'var(--muted)') + '';
+  html += '<div style="display:flex;gap:6px;margin-top:10px">';
+  html += '<button onclick="ruidoSetPersonasModo(\'suma\')" style="' + btnSuma + '" title="Suma R/R_v por cada hora del recorrido (exposición acumulada)">Suma por hora</button>';
+  html += '<button onclick="ruidoSetPersonasModo(\'dedup\')" style="' + btnDedup + '" title="Cada hexágono cuenta una sola vez, con su valor máximo (personas únicas)">Personas únicas</button>';
+  html += '</div>';
   html += '</div>';
 
   // ② Banda de ruido
