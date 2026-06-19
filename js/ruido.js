@@ -406,8 +406,7 @@ async function _ruidoEnsureCamionLoaded() {
 // 2. Filtrar por horas que cubre ESTA ruta (coord_timestamps) y solo 7-22h
 // 3. Filtrar por ventana geográfica (_ruidoVentanaPorHora) — solo hexágonos
 //    dentro del radio de la ruta en esa hora específica
-// 4. Para cada h3_index único resultante, tomar el R MÁXIMO entre sus horas válidas
-// 5. Sumar — cada hexágono se cuenta UNA SOLA VEZ
+// 4. Sumar R y R_v de todas las filas que pasan los filtros (sin deduplicar)
 function _ruidoGetPersonasAlcanzadas(entry) {
   if (!_camionData) return null;
   const oid     = String(entry.feature.properties.owner_id ?? '');
@@ -426,9 +425,7 @@ function _ruidoGetPersonasAlcanzadas(entry) {
   });
   if (horasRuta.size === 0) return null;
 
-  // Para cada h3_index único, acumular el R máximo entre las horas válidas
-  // respetando el bounding geográfico de la ruta (_ruidoVentanaPorHora)
-  const maxPorHex = new Map();
+  let totalR = 0, totalRv = 0;
   dataMap.forEach(({ R, R_v, h3, hour }) => {
     if (!horasRuta.has(hour)) return;
 
@@ -438,14 +435,6 @@ function _ruidoGetPersonasAlcanzadas(entry) {
       if (ventana && !ventana.has(h3)) return;
     }
 
-    const prev = maxPorHex.get(h3);
-    if (!prev || R > prev.R) {
-      maxPorHex.set(h3, { R, R_v });
-    }
-  });
-
-  let totalR = 0, totalRv = 0;
-  maxPorHex.forEach(({ R, R_v }) => {
     totalR  += R;
     totalRv += R_v;
   });
