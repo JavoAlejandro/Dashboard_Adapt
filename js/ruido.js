@@ -401,12 +401,19 @@ async function _ruidoEnsureCamionLoaded() {
   }
 }
 
-// Modo de cálculo de personas alcanzadas:
+// Modo de cálculo de personas alcanzadas (ponderado por R, alcance acústico):
+//   'dedup' → DEFAULT. Cada hexágono único cuenta una sola vez, con su R
+//             máximo entre las horas válidas. Representa personas alcanzadas
+//             como conjunto único — sumar a través de horas contaría el mismo
+//             lugar dos veces (14h y 15h no son personas nuevas).
 //   'suma'  → suma R/R_v de todas las filas hexágono-hora que pasan el filtro
-//             de hora (exposición acumulada a través de las horas del recorrido)
-//   'dedup' → cada hexágono único cuenta una sola vez, con su R máximo entre
-//             las horas válidas (personas alcanzadas como conjunto único)
-let _ruidoPersonasModo = 'suma';   // default
+//             de hora. Mide exposición acumulada en el tiempo, una métrica
+//             distinta (carga de exposición, no alcance).
+// Nota: incluso en 'dedup' persiste solapamiento espacial entre hexágonos
+// contiguos (la propagación de arcos vecinos se superpone), por lo que R
+// sigue siendo un alcance ponderado, no un conteo limpio de individuos.
+// Por eso la etiqueta en el panel dice "(ponderado)".
+let _ruidoPersonasModo = 'dedup';   // default: dedup (personas alcanzadas, no exposición acumulada)
 
 function ruidoSetPersonasModo(modo) {
   _ruidoPersonasModo = modo === 'dedup' ? 'dedup' : 'suma';
@@ -531,23 +538,25 @@ function _ruidoRenderStatsPanel(entry) {
   html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);margin-bottom:14px;letter-spacing:0.04em">';
   html += 'Camión ' + oid + ' · Día ' + dia + (mes ? ' · Mes ' + mes : '') + '</div>';
 
-  // ① Personas alcanzadas
+  // ① Personas alcanzadas (ponderado) — R es alcance acústico ponderado por
+  // intensidad, no un conteo limpio de individuos. La etiqueta debe reflejar
+  // esto para ser consistente con la metodología del paper.
   html += '<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">';
   html += '<span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">1</span>';
   if (personas) {
-    html += '<div style="font-family:Syne,sans-serif;font-weight:800;font-size:36px;line-height:1.05;color:var(--ink)">&#8776; ' + personas.R.toLocaleString() + ' <span style="font-size:14px;font-weight:600;color:var(--muted)">personas</span></div>';
-    html += '<div style="font-family:Syne,sans-serif;font-size:11px;color:var(--muted);margin-top:2px">alcanzadas por el ruido de este recorrido</div>';
+    html += '<div style="font-family:Syne,sans-serif;font-weight:800;font-size:36px;line-height:1.05;color:var(--ink)">&#8776; ' + personas.R.toLocaleString() + ' <span style="font-size:14px;font-weight:600;color:var(--muted)">personas alcanzadas (ponderado)</span></div>';
+    html += '<div style="font-family:Syne,sans-serif;font-size:11px;color:var(--muted);margin-top:2px">alcance acústico del ruido de este recorrido</div>';
     html += '<div style="font-family:Syne,sans-serif;font-size:12px;margin-top:6px;color:var(--ink)">de ellas, <strong style="color:#E03131">&#8776; ' + personas.R_v.toLocaleString() + ' vulnerables</strong></div>';
   } else {
     html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);padding:8px 0">Sin datos de personas para este camión</div>';
   }
-  // Toggle suma / dedup
-  const modoSuma  = _ruidoPersonasModo !== 'dedup';
+  // Toggle suma / dedup — dedup es el default (personas alcanzadas, no exposición acumulada)
+  const modoSuma  = _ruidoPersonasModo === 'suma';
   const btnSuma   = 'font-family:Syne Mono,monospace;font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:' + (modoSuma ? 'var(--ink)' : 'transparent') + ';color:' + (modoSuma ? 'var(--bg)' : 'var(--muted)') + '';
   const btnDedup  = 'font-family:Syne Mono,monospace;font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:' + (!modoSuma ? 'var(--ink)' : 'transparent') + ';color:' + (!modoSuma ? 'var(--bg)' : 'var(--muted)') + '';
   html += '<div style="display:flex;gap:6px;margin-top:10px">';
-  html += '<button onclick="ruidoSetPersonasModo(\'suma\')" style="' + btnSuma + '" title="Suma R/R_v por cada hora del recorrido (exposición acumulada)">Suma por hora</button>';
-  html += '<button onclick="ruidoSetPersonasModo(\'dedup\')" style="' + btnDedup + '" title="Cada hexágono cuenta una sola vez, con su valor máximo (personas únicas)">Personas únicas</button>';
+  html += '<button onclick="ruidoSetPersonasModo(\'dedup\')" style="' + btnDedup + '" title="Cada hexágono cuenta una sola vez, con su valor máximo (personas alcanzadas)">Personas alcanzadas</button>';
+  html += '<button onclick="ruidoSetPersonasModo(\'suma\')" style="' + btnSuma + '" title="Suma R/R_v por cada hora del recorrido (exposición acumulada en el tiempo)">Exposición acumulada</button>';
   html += '</div>';
   html += '</div>';
 
