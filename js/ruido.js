@@ -355,11 +355,10 @@ function ruidoSetRadioKm(km) {
 }
 
 // ─── DATOS DE CAMIÓN HORA (segundo CSV, lazy) ─────────────────────────────────
-// ruido/camion_hora_rm.csv → qué hexágonos × horas recorrió cada camión.
-// Solo se usa para saber POR DÓNDE pasó el camión (h3_index, hour) — la
-// población (P, P_v) se obtiene cruzando contra _ruidoByHour (hexagonos_hora_rm),
-// no desde R/R_v del propio archivo de camión.
-let _camionData      = null;   // Map<owner_id, Map<"h3|hour", {h3, hour}>>
+// ruido/camion_hora_rm.csv → R, R_v por owner_id × h3_index × hour.
+// R/R_v ya vienen calculados en el archivo (alcance acústico ponderado),
+// no se cruzan con hexagonos_hora_rm.
+let _camionData      = null;   // Map<owner_id, Map<"h3|hour", {R, R_v, h3, hour}>>
 let _camionLoaded    = false;
 let _camionLoading   = false;
 
@@ -373,8 +372,8 @@ async function _ruidoEnsureCamionLoaded() {
       Papa.parse(csvText, {
         header: true, dynamicTyping: true, skipEmptyLines: true,
         complete({ data: rows }) {
-          // Indexar por owner_id → Set de (h3_index, hour) únicos recorridos.
-          // No se guarda R/R_v: la población viene del archivo de hexágonos.
+          // Indexar por owner_id → Map<"h3_index|hour", {R, R_v}>
+          // Acumular R por (h3_index, hour) sumando todos los arcos de ese hexágono-hora
           _camionData = new Map();
           rows.forEach(r => {
             const oid  = String(r.owner_id ?? '');
@@ -382,8 +381,13 @@ async function _ruidoEnsureCamionLoaded() {
             const hour = Math.round(+r.hour);
             if (!oid || !h3 || isNaN(hour)) return;
             if (!_camionData.has(oid)) _camionData.set(oid, new Map());
-            const key = h3 + '|' + hour;
-            _camionData.get(oid).set(key, { h3, hour });
+            const key  = h3 + '|' + hour;
+            const prev = _camionData.get(oid).get(key) || { R: 0, R_v: 0, h3, hour };
+            _camionData.get(oid).set(key, {
+              R:   prev.R   + (+r.R   || 0),
+              R_v: prev.R_v + (+r.R_v || 0),
+              h3, hour,
+            });
           });
           _camionLoaded  = true;
           _camionLoading = false;
@@ -398,17 +402,18 @@ async function _ruidoEnsureCamionLoaded() {
   }
 }
 
-// Modo de cálculo de personas alcanzadas (P/P_v desde hexagonos_hora_rm):
-//   'dedup' → DEFAULT. Cada hexágono único del recorrido cuenta una sola vez,
-//             usando el P máximo entre las horas en que el camión pasó por él.
-//             Representa personas alcanzadas como conjunto único — pasar por
-//             el mismo hexágono a las 14h y 15h no son personas nuevas.
-//   'suma'  → suma P/P_v de cada hexágono en cada hora de paso (sin dedup).
-//             Mide exposición acumulada en el tiempo, una métrica distinta.
+// Modo de cálculo de personas alcanzadas (R/R_v desde camion_hora_rm):
+//   'dedup' → DEFAULT. Cada hexágono único cuenta una sola vez, con su R
+//             máximo entre las horas válidas. Representa personas alcanzadas
+//             como conjunto único — pasar por el mismo hexágono a las 14h y
+//             15h no son personas nuevas.
+//   'suma'  → suma R/R_v de cada (h3_index, hour) sin dedup. Mide exposición
+//             acumulada en el tiempo, una métrica distinta.
 // Nota: incluso en 'dedup' persiste solapamiento espacial entre hexágonos
 // contiguos (limitación propia de cómo se modela el alcance), no se corrige
 // aquí — el dedup solo elimina el doble conteo temporal (mismo hexágono en
 // distintas horas), no el solapamiento entre hexágonos vecinos.
+// Sin filtro geográfico (bounding) — se aplica aparte, no en este cálculo.
 let _ruidoPersonasModo = 'dedup';   // default: dedup (personas alcanzadas, no exposición acumulada)
 
 function ruidoSetPersonasModo(modo) {
@@ -418,20 +423,19 @@ function ruidoSetPersonasModo(modo) {
 }
 
 // Calcula personas alcanzadas:
-// 1. Tomar los hexágonos × hora únicos que el camión recorrió (de _camionData)
-// 2. Filtrar por horas que cubre ESTA ruta (coord_timestamps), solo 7-22h
-//    (P y P_v solo existen en esa ventana — fuera de ella no suman personas)
-// 3. Cruzar cada (h3_index, hour) contra _ruidoByHour para obtener P y P_v
-// 4a. Modo 'dedup' → por cada h3_index único, tomar el P máximo entre las
-//     horas válidas y sumar esos máximos (cada hexágono una sola vez)
-// 4b. Modo 'suma'  → sumar P/P_v de cada (h3_index, hour) sin dedup
+// 1. Tomar todas las combinaciones h3_index × hour del CSV de camión para este owner
+// 2. Filtrar por horas que cubre ESTA ruta (coord_timestamps) y solo 7-22h
+// 3a. Modo 'dedup' → para cada h3_index único, tomar el R máximo entre sus
+//     horas válidas y sumar esos máximos (cada hexágono cuenta una sola vez)
+// 3b. Modo 'suma'  → sumar R/R_v de todas las filas que pasan el filtro de hora
+// Sin filtro geográfico — no se descarta ningún hexágono por distancia.
 function _ruidoGetPersonasAlcanzadas(entry) {
-  if (!_camionData || !_ruidoByHour) return null;
+  if (!_camionData) return null;
   const oid     = String(entry.feature.properties.owner_id ?? '');
   const dataMap = _camionData.get(oid);
   if (!dataMap) return null;
 
-  // Horas de esta ruta, solo ventana 7-22h (única ventana con P/P_v)
+  // Horas de esta ruta, solo ventana 7-22h
   const ts = entry.feature.properties.coord_timestamps || [];
   const horasRuta = new Set();
   ts.forEach(t => {
@@ -443,40 +447,32 @@ function _ruidoGetPersonasAlcanzadas(entry) {
   });
   if (horasRuta.size === 0) return null;
 
-  let totalP = 0, totalPv = 0;
+  let totalR = 0, totalRv = 0;
 
   if (_ruidoPersonasModo === 'dedup') {
     // Dedup por máximo: cada hexágono único cuenta una sola vez
-    const maxPorHex = new Map();   // h3 → { P, P_v } máximos
-    dataMap.forEach(({ h3, hour }) => {
+    const maxPorHex = new Map();   // h3 → { R, R_v } máximos
+    dataMap.forEach(({ R, R_v, h3, hour }) => {
       if (!horasRuta.has(hour)) return;
-      const hexHora = _ruidoByHour.get(hour);
-      const row     = hexHora ? hexHora.get(h3) : null;
-      if (!row) return;
-      const P  = +row.P  || 0;
-      const Pv = +row.P_v || 0;
       const prev = maxPorHex.get(h3);
-      if (!prev || P > prev.P) {
-        maxPorHex.set(h3, { P, P_v: Pv });
+      if (!prev || R > prev.R) {
+        maxPorHex.set(h3, { R, R_v });
       }
     });
-    maxPorHex.forEach(({ P, P_v }) => {
-      totalP  += P;
-      totalPv += P_v;
+    maxPorHex.forEach(({ R, R_v }) => {
+      totalR  += R;
+      totalRv += R_v;
     });
   } else {
     // Suma simple: exposición acumulada a través de las horas del recorrido
-    dataMap.forEach(({ h3, hour }) => {
+    dataMap.forEach(({ R, R_v, hour }) => {
       if (!horasRuta.has(hour)) return;
-      const hexHora = _ruidoByHour.get(hour);
-      const row     = hexHora ? hexHora.get(h3) : null;
-      if (!row) return;
-      totalP  += (+row.P   || 0);
-      totalPv += (+row.P_v || 0);
+      totalR  += R;
+      totalRv += R_v;
     });
   }
 
-  return totalP > 0 ? { R: Math.round(totalP), R_v: Math.round(totalPv) } : null;
+  return totalR > 0 ? { R: Math.round(totalR), R_v: Math.round(totalRv) } : null;
 }
 
 // ─── PERCENTIL EN LA RM (calculado una sola vez tras cargar hexágonos_hora) ───
