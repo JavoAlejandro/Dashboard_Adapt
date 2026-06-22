@@ -987,7 +987,7 @@ select.pal-sel {
 /* ── IMPACT HEATMAP LEGEND ───────────────────────────────────────────────────*/
 .impact-legend {
   position: absolute;
-  bottom: 36px;
+  bottom: 155px;
   left: 12px;
   z-index: 500;
   background: var(--surface);
@@ -1059,6 +1059,19 @@ select.pal-sel {
 
 .sub-tab-panel { display: none; }
 .sub-tab-panel.active { display: block; }
+
+/* ── RUIDO: sub-pestañas internas (Vehículo / Impacto Poblacional) ────────── */
+.ruido-inner-panel { display: block; }
+#ruido-inner-tabs {
+  padding: 0 20px;
+  background: var(--surface);
+  border-top: none;
+  border-bottom: 1px solid var(--border);
+}
+#ruido-inner-tabs .sub-tab {
+  font-size: 9px;
+  padding: 6px 16px 7px;
+}
 
 /* Placeholder for unimplemented sub-tabs */
 .subtab-placeholder {

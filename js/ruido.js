@@ -359,6 +359,7 @@ function ruidoSetRadioKm(km) {
 // R/R_v ya vienen calculados en el archivo (alcance acústico ponderado),
 // no se cruzan con hexagonos_hora_rm.
 let _camionData      = null;   // Map<owner_id, Map<"h3|hour", {R, R_v, h3, hour}>>
+let _camionDiagData  = null;   // Map<owner_id, Map<"arc_id|hour", {arc_id,hour,contrib,R,regime,length_m}>>
 let _camionLoaded    = false;
 let _camionLoading   = false;
 
@@ -372,14 +373,18 @@ async function _ruidoEnsureCamionLoaded() {
       Papa.parse(csvText, {
         header: true, dynamicTyping: true, skipEmptyLines: true,
         complete({ data: rows }) {
-          // Indexar por owner_id → Map<"h3_index|hour", {R, R_v}>
-          // Acumular R por (h3_index, hour) sumando todos los arcos de ese hexágono-hora
-          _camionData = new Map();
+          // Índice principal: owner_id → Map<"h3_index|hour", {R, R_v, h3, hour}>
+          _camionData     = new Map();
+          // Índice diagnóstico: owner_id → Map<"arc_id|hour", {arc_id,hour,contrib,R,regime,length_m}>
+          _camionDiagData = new Map();
+
           rows.forEach(r => {
-            const oid  = String(r.owner_id ?? '');
-            const h3   = String(r.h3_index ?? '');
-            const hour = Math.round(+r.hour);
+            const oid    = String(r.owner_id ?? '');
+            const h3     = String(r.h3_index ?? '');
+            const hour   = Math.round(+r.hour);
             if (!oid || !h3 || isNaN(hour)) return;
+
+            // ── R por hexágono-hora ─────────────────────────────────────────
             if (!_camionData.has(oid)) _camionData.set(oid, new Map());
             const key  = h3 + '|' + hour;
             const prev = _camionData.get(oid).get(key) || { R: 0, R_v: 0, h3, hour };
@@ -388,9 +393,32 @@ async function _ruidoEnsureCamionLoaded() {
               R_v: prev.R_v + (+r.R_v || 0),
               h3, hour,
             });
+
+            // ── Diagnóstico: contrib = dLdk × R por (arc_id, hour) ─────────
+            const arcId  = String(r.arc_id  ?? h3);    // fallback a h3 si no hay arc_id
+            const dLdk   = +r.dLdk    || 0;
+            const R_val  = +r.R       || 0;
+            const contrib = dLdk * R_val;
+            const regime  = String(r.regime   ?? '');
+            const length  = +r.length_m || 0;
+
+            if (!_camionDiagData.has(oid)) _camionDiagData.set(oid, new Map());
+            const dKey  = arcId + '|' + hour;
+            const dp    = _camionDiagData.get(oid).get(dKey)
+                        || { arc_id: arcId, hour, contrib: 0, R: 0, regime, length_m: length };
+            _camionDiagData.get(oid).set(dKey, {
+              arc_id:   arcId,
+              hour,
+              contrib:  dp.contrib  + contrib,
+              R:        dp.R        + R_val,
+              regime:   regime      || dp.regime,
+              length_m: Math.max(dp.length_m, length),
+            });
           });
+
           _camionLoaded  = true;
           _camionLoading = false;
+          _ruidoOnDiagDataReady();   // re-renderizar panel Vehículo si hay ruta activa
           resolve(true);
         },
         error() { _camionLoading = false; resolve(false); },
@@ -402,33 +430,16 @@ async function _ruidoEnsureCamionLoaded() {
   }
 }
 
-// Modo de cálculo de personas alcanzadas (R/R_v desde camion_hora_rm):
-//   'dedup' → DEFAULT. Cada hexágono único cuenta una sola vez, con su R
-//             máximo entre las horas válidas. Representa personas alcanzadas
-//             como conjunto único — pasar por el mismo hexágono a las 14h y
-//             15h no son personas nuevas.
-//   'suma'  → suma R/R_v de cada (h3_index, hour) sin dedup. Mide exposición
-//             acumulada en el tiempo, una métrica distinta.
-// Nota: incluso en 'dedup' persiste solapamiento espacial entre hexágonos
-// contiguos (limitación propia de cómo se modela el alcance), no se corrige
-// aquí — el dedup solo elimina el doble conteo temporal (mismo hexágono en
-// distintas horas), no el solapamiento entre hexágonos vecinos.
-// Sin filtro geográfico (bounding) — se aplica aparte, no en este cálculo.
-let _ruidoPersonasModo = 'dedup';   // default: dedup (personas alcanzadas, no exposición acumulada)
+// Modo de cálculo: dedup (única definición según spec).
+// Cada hexágono cuenta una sola vez con su R máximo en la ventana 7-22h.
+// El dedup elimina el doble conteo temporal (mismo hex en distintas horas),
+// no el solapamiento entre hexágonos vecinos (limitación del modelo).
+const _ruidoPersonasModo = 'dedup';
 
-function ruidoSetPersonasModo(modo) {
-  _ruidoPersonasModo = modo === 'dedup' ? 'dedup' : 'suma';
-  const entry = gpsLayers[ruidoAnimState.targetId];
-  if (entry) _ruidoRenderStatsPanel(entry);
-}
-
-// Calcula personas alcanzadas:
-// 1. Tomar todas las combinaciones h3_index × hour del CSV de camión para este owner
-// 2. Filtrar por horas que cubre ESTA ruta (coord_timestamps) y solo 7-22h
-// 3a. Modo 'dedup' → para cada h3_index único, tomar el R máximo entre sus
-//     horas válidas y sumar esos máximos (cada hexágono cuenta una sola vez)
-// 3b. Modo 'suma'  → sumar R/R_v de todas las filas que pasan el filtro de hora
-// Sin filtro geográfico — no se descarta ningún hexágono por distancia.
+// Calcula personas alcanzadas (R deduplicado):
+// Para cada h3_index único, tomar el R máximo entre las horas válidas (7-22h)
+// de esta ruta y sumar esos máximos. Cada hexágono cuenta una sola vez.
+// Sin filtro geográfico — coherente con la definición del ranking de empresa.
 function _ruidoGetPersonasAlcanzadas(entry) {
   if (!_camionData) return null;
   const oid     = String(entry.feature.properties.owner_id ?? '');
@@ -440,39 +451,22 @@ function _ruidoGetPersonasAlcanzadas(entry) {
   const horasRuta = new Set();
   ts.forEach(t => {
     const m = t && String(t).match(/^(\d{1,2}):/);
-    if (m) {
-      const h = parseInt(m[1], 10);
-      if (h >= 7 && h <= 22) horasRuta.add(h);
-    }
+    if (m) { const h = parseInt(m[1], 10); if (h >= 7 && h <= 22) horasRuta.add(h); }
   });
   if (horasRuta.size === 0) return null;
 
-  let totalR = 0, totalRv = 0;
+  // Dedup por máximo: cada hexágono único cuenta una sola vez
+  const maxPorHex = new Map();
+  dataMap.forEach(({ R, h3, hour }) => {
+    if (!horasRuta.has(hour)) return;
+    const prev = maxPorHex.get(h3);
+    if (!prev || R > prev) maxPorHex.set(h3, R);
+  });
 
-  if (_ruidoPersonasModo === 'dedup') {
-    // Dedup por máximo: cada hexágono único cuenta una sola vez
-    const maxPorHex = new Map();   // h3 → { R, R_v } máximos
-    dataMap.forEach(({ R, R_v, h3, hour }) => {
-      if (!horasRuta.has(hour)) return;
-      const prev = maxPorHex.get(h3);
-      if (!prev || R > prev.R) {
-        maxPorHex.set(h3, { R, R_v });
-      }
-    });
-    maxPorHex.forEach(({ R, R_v }) => {
-      totalR  += R;
-      totalRv += R_v;
-    });
-  } else {
-    // Suma simple: exposición acumulada a través de las horas del recorrido
-    dataMap.forEach(({ R, R_v, hour }) => {
-      if (!horasRuta.has(hour)) return;
-      totalR  += R;
-      totalRv += R_v;
-    });
-  }
+  let totalR = 0;
+  maxPorHex.forEach(R => { totalR += R; });
 
-  return totalR > 0 ? { R: Math.round(totalR), R_v: Math.round(totalRv) } : null;
+  return totalR > 0 ? { R: Math.round(totalR) } : null;
 }
 
 // ─── PERCENTIL EN LA RM (calculado una sola vez tras cargar hexágonos_hora) ───
@@ -540,26 +534,20 @@ function _ruidoRenderStatsPanel(entry) {
   html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);margin-bottom:14px;letter-spacing:0.04em">';
   html += 'Camión ' + oid + ' · Día ' + dia + (mes ? ' · Mes ' + mes : '') + '</div>';
 
-  // ① Personas alcanzadas (ponderado) — R es alcance acústico ponderado por
-  // intensidad, no un conteo limpio de individuos. La etiqueta debe reflejar
-  // esto para ser consistente con la metodología del paper.
+  // ① Personas alcanzadas (ponderado)
+  // R = alcance acústico deduplicado por hexágono (máximo en ventana 7-22h).
+  // Una sola definición: cada hexágono cuenta una vez — pasar por el mismo hex
+  // en distintas horas no son personas nuevas. Etiqueta con ≈ para coherencia
+  // con la metodología (no es conteo exacto de individuos).
   html += '<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">';
   html += '<span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">1</span>';
   if (personas) {
-    html += '<div style="font-family:Syne,sans-serif;font-weight:800;font-size:36px;line-height:1.05;color:var(--ink)">&#8776; ' + personas.R.toLocaleString() + ' <span style="font-size:14px;font-weight:600;color:var(--muted)">personas alcanzadas (ponderado)</span></div>';
-    html += '<div style="font-family:Syne,sans-serif;font-size:11px;color:var(--muted);margin-top:2px">alcance acústico del ruido de este recorrido</div>';
-    html += '<div style="font-family:Syne,sans-serif;font-size:12px;margin-top:6px;color:var(--ink)">de ellas, <strong style="color:#E03131">&#8776; ' + personas.R_v.toLocaleString() + ' vulnerables</strong></div>';
+    html += '<div style="font-family:Syne,sans-serif;font-weight:800;font-size:36px;line-height:1.05;color:var(--ink)">&#8776; ' + personas.R.toLocaleString() + '</div>';
+    html += '<div style="font-family:Syne,sans-serif;font-size:12px;font-weight:600;color:var(--muted);margin-top:2px">personas alcanzadas (ponderado)</div>';
+    html += '<div style="font-family:Syne,sans-serif;font-size:11px;color:var(--muted);margin-top:4px">alcance acústico del ruido de este recorrido · deduplicado por hexágono</div>';
   } else {
     html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);padding:8px 0">Sin datos de personas para este camión</div>';
   }
-  // Toggle suma / dedup — dedup es el default (personas alcanzadas, no exposición acumulada)
-  const modoSuma  = _ruidoPersonasModo === 'suma';
-  const btnSuma   = 'font-family:Syne Mono,monospace;font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:' + (modoSuma ? 'var(--ink)' : 'transparent') + ';color:' + (modoSuma ? 'var(--bg)' : 'var(--muted)') + '';
-  const btnDedup  = 'font-family:Syne Mono,monospace;font-size:9px;padding:3px 8px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:' + (!modoSuma ? 'var(--ink)' : 'transparent') + ';color:' + (!modoSuma ? 'var(--bg)' : 'var(--muted)') + '';
-  html += '<div style="display:flex;gap:6px;margin-top:10px">';
-  html += '<button onclick="ruidoSetPersonasModo(\'dedup\')" style="' + btnDedup + '" title="Cada hexágono cuenta una sola vez, con su valor máximo (personas alcanzadas)">Personas alcanzadas</button>';
-  html += '<button onclick="ruidoSetPersonasModo(\'suma\')" style="' + btnSuma + '" title="Suma R/R_v por cada hora del recorrido (exposición acumulada en el tiempo)">Exposición acumulada</button>';
-  html += '</div>';
   html += '</div>';
 
   // ② Banda de ruido
@@ -602,197 +590,9 @@ function _ruidoRenderStatsPanel(entry) {
   html += '</div>';
 
 
-  // ── Velocímetros de KPIs por empresa ──────────────────────────────────────
-  html += _ruidoRenderKpiGauges(entry);
+  // KPIs de empresa → reservados para la sección Empresa (no en panel Camión)
 
   panel.innerHTML = html;
-}
-
-// ─── KPIs POR EMPRESA — VELOCÍMETROS ──────────────────────────────────────────
-// Tres archivos:
-//   dashboard_kpis_referencia.csv → escala de la flota por KPI (percentiles)
-//   dashboard_kpis_empresa.csv    → una fila por account_id, valores actual/ref/delta
-// Cuatro KPIs: AMNI, SSR, PWMNE, VP_PWMNE. En los cuatro, más alto es peor.
-
-const RUIDO_KPI_LIST = ['AMNI', 'SSR', 'PWMNE', 'VP_PWMNE'];
-const RUIDO_KPI_LABELS = {
-  AMNI:      'AMNI',
-  SSR:       'SSR',
-  PWMNE:     'PWMNE',
-  VP_PWMNE:  'VP-PWMNE',
-};
-
-let _kpiRefData    = null;   // Map<kpi, {p10,p25,p50,p75,p90, higherIsWorse}>
-let _kpiEmpresaData = null;  // Map<account_id, {AMNI_actual, AMNI_ref, AMNI_delta, AMNI_actual_pct, ...}>
-let _kpiLoaded     = false;
-let _kpiLoading    = false;
-
-async function _ruidoEnsureKpiLoaded() {
-  if (_kpiLoaded || _kpiLoading) return _kpiLoaded;
-  _kpiLoading = true;
-  try {
-    const [refRes, empRes] = await Promise.all([
-      r2Fetch('ruido/dashboard_kpis_referencia.csv'),
-      r2Fetch('ruido/dashboard_kpis_empresa.csv'),
-    ]);
-    const [refText, empText] = await Promise.all([refRes.text(), empRes.text()]);
-
-    return new Promise(resolve => {
-      let pending = 2;
-      const done = () => { if (--pending === 0) { _kpiLoaded = true; _kpiLoading = false; resolve(true); } };
-
-      Papa.parse(refText, {
-        header: true, dynamicTyping: true, skipEmptyLines: true,
-        complete({ data: rows }) {
-          _kpiRefData = new Map();
-          rows.forEach(r => {
-            const kpi = String(r.kpi ?? '').trim();
-            if (!kpi) return;
-            _kpiRefData.set(kpi, {
-              p25: +r.actual_p25, p50: +r.actual_p50_median, p75: +r.actual_p75,
-              min: +r.actual_min, max: +r.actual_max,
-              higherIsWorse: String(r.higher_is_worse).toLowerCase() === 'true',
-            });
-          });
-          done();
-        },
-        error() { done(); },
-      });
-
-      Papa.parse(empText, {
-        header: true, dynamicTyping: true, skipEmptyLines: true,
-        complete({ data: rows }) {
-          _kpiEmpresaData = new Map();
-          rows.forEach(r => {
-            const aid = String(r.account_id ?? '');
-            if (!aid) return;
-            _kpiEmpresaData.set(aid, r);
-          });
-          done();
-        },
-        error() { done(); },
-      });
-    });
-  } catch {
-    _kpiLoading = false;
-    return false;
-  }
-}
-
-// Convierte un valor en ángulo de aguja, dentro de un arco de -90° a +90°.
-// Escala por percentiles, NO min-max: p50 (mediana) queda exactamente al
-// centro (0°). El tramo [p25,p50] mapea a [-90°,0°], y [p50,p75] a [0°,90°].
-// Valores fuera de [p25,p75] se clampan a los extremos del arco.
-function _ruidoKpiAngulo(valor, ref) {
-  if (valor == null || isNaN(valor) || !ref) return 0;
-  const { p25, p50, p75 } = ref;
-  if (valor <= p25) return -90;
-  if (valor >= p75) return 90;
-  if (valor === p50) return 0;
-  if (valor < p50) {
-    const t = (valor - p25) / Math.max(p50 - p25, 1e-9);
-    return -90 + t * 90;
-  } else {
-    const t = (valor - p50) / Math.max(p75 - p50, 1e-9);
-    return t * 90;
-  }
-}
-
-function _ruidoFmtKpiValor(v) {
-  if (v == null || isNaN(v)) return '—';
-  const abs = Math.abs(v);
-  if (abs >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (abs >= 10)   return v.toFixed(1);
-  return v.toFixed(2);
-}
-
-// Genera el SVG de un velocímetro individual.
-// Aguja larga = actual. Marca corta punteada = ref. Texto bajo = delta.
-function _ruidoSvgGauge(kpi, empresaRow, ref) {
-  const label    = RUIDO_KPI_LABELS[kpi] || kpi;
-  const actual   = empresaRow ? +empresaRow[kpi + '_actual']     : null;
-  const refVal   = empresaRow ? +empresaRow[kpi + '_ref']        : null;
-  const delta    = empresaRow ? +empresaRow[kpi + '_delta']      : null;
-  const pct      = empresaRow ? empresaRow[kpi + '_actual_pct']  : null;
-
-  const angActual = _ruidoKpiAngulo(actual, ref);
-  const angRef    = _ruidoKpiAngulo(refVal, ref);
-
-  const deltaColor = (delta != null && delta > 0) ? '#c0392b' : (delta != null && delta < 0) ? '#2d7a4f' : 'var(--muted)';
-  const deltaSign  = (delta != null && delta > 0) ? '+' : '';
-
-  let svg = '';
-  svg += '<svg width="100%" viewBox="0 0 200 120" role="img" style="display:block">';
-  svg += '<title>Velocímetro ' + label + (pct != null ? ', percentil ' + Math.round(pct) : '') + '</title>';
-  // Pista de fondo
-  svg += '<path d="M 20 100 A 80 80 0 0 1 180 100" fill="none" stroke="var(--border)" stroke-width="14" stroke-linecap="round"/>';
-  // Mitad izquierda (mejor que mediana) y derecha (peor que mediana)
-  svg += '<path d="M 20 100 A 80 80 0 0 1 100 20" fill="none" stroke="#a8d5a8" stroke-width="14"/>';
-  svg += '<path d="M 100 20 A 80 80 0 0 1 180 100" fill="none" stroke="#e8a8a8" stroke-width="14"/>';
-  // Marca de referencia (ref) — línea corta punteada
-  if (refVal != null && !isNaN(refVal)) {
-    svg += '<g transform="rotate(' + angRef.toFixed(1) + ' 100 100)">';
-    svg += '<line x1="100" y1="100" x2="100" y2="32" stroke="var(--ink2)" stroke-width="2" stroke-dasharray="2 2"/>';
-    svg += '</g>';
-  }
-  // Aguja principal (actual)
-  if (actual != null && !isNaN(actual)) {
-    svg += '<g transform="rotate(' + angActual.toFixed(1) + ' 100 100)">';
-    svg += '<line x1="100" y1="100" x2="100" y2="28" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>';
-    svg += '</g>';
-  }
-  svg += '<circle cx="100" cy="100" r="6" fill="var(--ink)"/>';
-  svg += '<text x="100" y="115" text-anchor="middle" font-size="13" font-weight="500" fill="var(--ink)" font-family="Syne,sans-serif">' + _ruidoFmtKpiValor(actual) + '</text>';
-  svg += '</svg>';
-
-  let html = '<div style="background:var(--surface);border-radius:4px;padding:10px">';
-  html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">';
-  html += '<span style="font-family:Syne,sans-serif;font-size:11px;font-weight:600;color:var(--ink)">' + label + '</span>';
-  html += '<span style="font-family:Syne Mono,monospace;font-size:9px;color:var(--muted)">' + (pct != null ? 'p' + Math.round(pct) : '—') + '</span>';
-  html += '</div>';
-  html += svg;
-  html += '<div style="display:flex;justify-content:space-between;font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);margin-top:2px">';
-  html += '<span>ref ' + _ruidoFmtKpiValor(refVal) + '</span>';
-  html += '<span style="color:' + deltaColor + '">&Delta; ' + deltaSign + _ruidoFmtKpiValor(delta) + '</span>';
-  html += '</div></div>';
-
-  return html;
-}
-
-// Bloque completo de 4 velocímetros en grilla 2x2, con el account_id de la
-// empresa del camión activo como encabezado.
-function _ruidoRenderKpiGauges(entry) {
-  const aid = String(entry.feature.properties.account_id ?? '');
-  if (!aid) return '';
-
-  let html = '<div style="margin-top:8px;padding-top:20px;border-top:1px solid var(--border)">';
-  html += '<div style="font-family:Syne Mono,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:2px">Empresa</div>';
-
-  if (!_kpiLoaded) {
-    html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);padding:8px 0">Cargando KPIs de empresa…</div></div>';
-    return html;
-  }
-
-  const empresaRow = _kpiEmpresaData ? _kpiEmpresaData.get(aid) : null;
-
-  const nVeh = empresaRow ? empresaRow.n_vehicles : null;
-  html += '<div style="font-family:Syne,sans-serif;font-size:16px;font-weight:700;color:var(--ink);margin-bottom:12px">';
-  html += aid + (nVeh != null ? ' <span style="font-size:11px;font-weight:400;color:var(--muted)">· ' + nVeh + ' vehículos</span>' : '');
-  html += '</div>';
-
-  if (!empresaRow) {
-    html += '<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);padding:8px 0">Sin datos de KPIs para esta empresa</div></div>';
-    return html;
-  }
-
-  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
-  RUIDO_KPI_LIST.forEach(kpi => {
-    const ref = _kpiRefData ? _kpiRefData.get(kpi) : null;
-    html += _ruidoSvgGauge(kpi, empresaRow, ref);
-  });
-  html += '</div></div>';
-
-  return html;
 }
 
 function _ruidoCalcularEstadisticas(entry) {
@@ -1096,20 +896,18 @@ async function ruidoOnTabEnter() {
     }
     _ruidoComputarVentana(finalEntry);
     _ruidoRenderStatsPanel(finalEntry);
+    _ruidoRenderVehiculoPanel(finalEntry);
     _ruidoPaintForPoint(finalEntry, 0);
   } else if (!finalEntry) {
-    document.getElementById('map-ruido-empty').style.display = 'flex';
-    document.getElementById('map-ruido-wrap').style.display  = 'none';
-    document.getElementById('ruido-side-stats').style.display = 'none';
+    document.getElementById('map-ruido-empty').style.display    = 'flex';
+    document.getElementById('map-ruido-wrap').style.display     = 'none';
+    document.getElementById('ruido-vehiculo-empty').style.display = 'flex';
+    document.getElementById('ruido-vehiculo-map-wrap').style.display = 'none';
+    document.getElementById('ruido-side-stats').style.display   = 'none';
+    document.getElementById('ruido-vehiculo-stats').style.display = 'none';
     const note = document.getElementById('ruido-anim-note');
     if (note) note.textContent = 'Selecciona un camión específico en la pestaña Exposición (Camión + Mes + Día)';
   }
-
-  // Cargar KPIs de empresa de forma independiente (puede tardar un poco más)
-  // y re-renderizar el panel con los velocímetros cuando estén listos.
-  _ruidoEnsureKpiLoaded().then(kpiOk => {
-    if (kpiOk && finalEntry) _ruidoRenderStatsPanel(finalEntry);
-  });
 }
 
 // Replica la resolución de "singleId" de applyFilters() en gps.js, para que
@@ -1120,4 +918,297 @@ function _ruidoResolveSingleId() {
   if (fv.bus === 'all') return null;   // sin camión específico → sin ruta única
   const candidates = Object.entries(gpsLayers).filter(([, e]) => _entryMatches(e, fv));
   return candidates.length === 1 ? candidates[0][0] : null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SWITCH PESTAÑAS INTERNAS DEL PANEL RUIDO (Vehículo / Impacto Poblacional)
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _ruidoInnerTab = 'vehiculo';   // pestaña interna activa
+
+function ruidoSwitchInnerTab(name, btn) {
+  _ruidoInnerTab = name;
+  document.querySelectorAll('#ruido-inner-tabs .sub-tab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+
+  document.getElementById('ruido-inner-vehiculo').style.display =
+    name === 'vehiculo' ? 'block' : 'none';
+  document.getElementById('ruido-inner-impacto').style.display  =
+    name === 'impacto'  ? 'block' : 'none';
+
+  // Invalidar mapas al mostrarse
+  if (name === 'vehiculo' && _ruidoMap) setTimeout(() => _ruidoMap.invalidateSize(), 80);
+  if (name === 'impacto'  && _ruidoImpactoMap) setTimeout(() => _ruidoImpactoMap.invalidateSize(), 80);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MAPA IMPACTO POBLACIONAL (mapa Leaflet separado del de Vehículo)
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _ruidoImpactoMap = null;
+
+function _ruidoInitImpactoMap(entry) {
+  if (_ruidoImpactoMap) return;
+  const container = document.getElementById('map-ruido-impacto');
+  if (!container) return;
+
+  const coords = entry ? entry.coords : null;
+  const center = coords && coords.length ? coords[Math.floor(coords.length / 2)] : [-33.45, -70.67];
+
+  _ruidoImpactoMap = L.map('map-ruido-impacto', {
+    zoomControl: true, attributionControl: false, preferCanvas: true,
+  }).setView(center, 13);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd', maxZoom: 19,
+  }).addTo(_ruidoImpactoMap);
+
+  const p2 = _ruidoImpactoMap.createPane('ruidoImpactoPane');
+  p2.style.zIndex        = '300';
+  p2.style.pointerEvents = 'none';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DIAGNÓSTICO DE VEHÍCULO — cálculo desde _camionDiagData
+// Según la nota de implementación:
+//   1. contrib = dLdk × R  (ya calculado al parsear)
+//   2. Tramo = (arc_id, hour) — ya agrupado
+//   3. Ruido evitable → contrib > 0
+//   4. Concentración: top1, top3, top5
+//   5. Tramos críticos: top 5
+//   6. Perfil horario: contrib por hour
+//   7. Mezcla por régimen: contrib por regime
+// ══════════════════════════════════════════════════════════════════════════════
+
+function _ruidoDiagnosticoVehiculo(entry) {
+  if (!_camionDiagData) return null;
+
+  const oid     = String(entry.feature.properties.owner_id ?? '');
+  const diagMap = _camionDiagData.get(oid);
+  if (!diagMap || diagMap.size === 0) return null;
+
+  // Horas de la ruta (ventana 7-22h)
+  const ts = entry.feature.properties.coord_timestamps || [];
+  const horasRuta = new Set();
+  ts.forEach(t => {
+    const m = t && String(t).match(/^(\d{1,2}):/);
+    if (m) { const h = parseInt(m[1], 10); if (h >= 7 && h <= 22) horasRuta.add(h); }
+  });
+
+  // Tramos: filtrar por horas de la ruta (o aceptar todos si no hay timestamps)
+  const tramos = [];
+  diagMap.forEach(d => {
+    if (horasRuta.size > 0 && !horasRuta.has(d.hour)) return;
+    tramos.push({ ...d });
+  });
+
+  if (!tramos.length) return null;
+
+  // Solo evitables (contrib > 0)
+  const evitables = tramos.filter(d => d.contrib > 0)
+                          .sort((a, b) => b.contrib - a.contrib);
+  const totalPositivo = evitables.reduce((s, d) => s + d.contrib, 0);
+
+  if (totalPositivo === 0) return { sin_evitables: true, oid };
+
+  // Concentración
+  const acum = (n) => evitables.slice(0, n).reduce((s, d) => s + d.contrib, 0);
+  const pct  = (v) => totalPositivo > 0 ? Math.round(v / totalPositivo * 100) : 0;
+  const concentracion = {
+    top1: pct(acum(1)),
+    top3: pct(acum(3)),
+    top5: pct(acum(5)),
+    total_tramos: evitables.length,
+  };
+
+  // Tramos críticos (top 5)
+  const criticos = evitables.slice(0, 5).map(d => ({
+    arc_id:  d.arc_id,
+    hour:    d.hour,
+    regime:  d.regime,
+    R:       Math.round(d.R),
+    pct:     pct(d.contrib),
+    contrib: d.contrib,
+  }));
+
+  // Perfil horario
+  const porHora = new Map();
+  evitables.forEach(d => {
+    porHora.set(d.hour, (porHora.get(d.hour) || 0) + d.contrib);
+  });
+  const perfilHorario = Array.from(porHora.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([hour, contrib]) => ({ hour, contrib, pct: pct(contrib) }));
+
+  // Mezcla por régimen
+  const porRegimen = new Map();
+  evitables.forEach(d => {
+    const reg = d.regime || 'Desconocido';
+    porRegimen.set(reg, (porRegimen.get(reg) || 0) + d.contrib);
+  });
+  const regimenes = Array.from(porRegimen.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([regime, contrib]) => ({ regime, contrib, pct: pct(contrib) }));
+  const regimenDominante = regimenes[0]?.regime || '';
+
+  // Texto adaptativo según concentración y régimen
+  let mensajeConcentracion, mensajeRegimen;
+  if (concentracion.top3 >= 70) {
+    mensajeConcentracion = `${Math.min(evitables.length, 3)} tramos = ${concentracion.top3}% · pocos tramos, alto retorno`;
+  } else if (concentracion.top3 >= 40) {
+    mensajeConcentracion = `Concentración moderada · top 3 = ${concentracion.top3}%`;
+  } else {
+    mensajeConcentracion = `Ruido repartido · top 3 = ${concentracion.top3}% · sin atajo de pocos tramos`;
+  }
+
+  const regLow = regimenDominante.toLowerCase();
+  if (regLow.includes('sensitive') || regLow.includes('free')) {
+    mensajeRegimen = 'Régimen dominante: free-flow · acción de mayor retorno: re-rutear tramos críticos';
+  } else if (regLow.includes('saturated') || regLow.includes('congest')) {
+    mensajeRegimen = 'Régimen dominante: congestión · ruido evitable es menor, palanca en horarios';
+  } else {
+    mensajeRegimen = `Régimen dominante: ${regimenDominante}`;
+  }
+
+  return {
+    oid, totalPositivo, concentracion, criticos,
+    perfilHorario, regimenes, regimenDominante,
+    mensajeConcentracion, mensajeRegimen,
+    sin_evitables: false,
+  };
+}
+
+// ── RENDER DEL PANEL VEHÍCULO ─────────────────────────────────────────────────
+
+function _ruidoRenderVehiculoPanel(entry) {
+  const panel = document.getElementById('ruido-vehiculo-stats');
+  const emptyEl = document.getElementById('ruido-vehiculo-empty');
+  const mapWrap = document.getElementById('ruido-vehiculo-map-wrap');
+  if (!panel) return;
+
+  const diag = _ruidoDiagnosticoVehiculo(entry);
+  const p    = entry.feature.properties;
+  const oid  = p.owner_id ?? '';
+  const dia  = p.dia      ?? '';
+  const mes  = p.mes      ?? '';
+
+  if (!diag) {
+    // Datos de diagnóstico aún no cargados
+    panel.style.display = 'none';
+    if (emptyEl) { emptyEl.style.display = 'flex'; emptyEl.querySelector('span').textContent = 'Cargando datos de diagnóstico…'; }
+    if (mapWrap) mapWrap.style.display = 'none';
+    return;
+  }
+
+  // Mostrar mapa (el mapa Leaflet _ruidoMap ya inicializado en ruidoSyncRoute)
+  if (emptyEl) emptyEl.style.display = 'none';
+  if (mapWrap) mapWrap.style.display = 'block';
+  panel.style.display = 'flex';
+
+  if (diag.sin_evitables) {
+    panel.innerHTML = `
+      <div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);margin-bottom:14px">
+        Camión ${oid} · Día ${dia}${mes ? ' · Mes ' + mes : ''}
+      </div>
+      <div style="font-family:Syne,sans-serif;font-size:13px;color:var(--ink2);padding:20px 0">
+        Este vehículo casi no genera ruido marginal evitable en la franja diurna.
+      </div>`;
+    return;
+  }
+
+  const fmtContrib = v => Math.abs(v) >= 1000
+    ? (v / 1000).toFixed(1) + 'k'
+    : v.toFixed(1);
+
+  let html = '';
+
+  // Contexto
+  html += `<div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--muted);margin-bottom:14px;letter-spacing:0.04em">
+    Camión ${oid} · Día ${dia}${mes ? ' · Mes ' + mes : ''}
+  </div>`;
+
+  // ① CONCENTRACIÓN (el titular)
+  html += `<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+    <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">1</span>
+    <div style="font-family:Syne,sans-serif;font-weight:800;font-size:28px;line-height:1.1;color:var(--ink);margin-top:4px">
+      ${diag.concentracion.top3}%
+      <span style="font-size:13px;font-weight:500;color:var(--muted)">en top 3 tramos</span>
+    </div>
+    <div style="font-family:Syne,sans-serif;font-size:11px;color:var(--ink2);margin-top:6px">${diag.mensajeConcentracion}</div>
+    <div style="display:flex;gap:16px;margin-top:10px">
+      ${[['1', diag.concentracion.top1], ['3', diag.concentracion.top3], ['5', diag.concentracion.top5]]
+        .map(([n, v]) => `<div style="text-align:center">
+          <div style="font-family:Syne,sans-serif;font-weight:700;font-size:18px;color:var(--accent)">${v}%</div>
+          <div style="font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);letter-spacing:0.08em">TOP ${n}</div>
+        </div>`).join('')}
+      <div style="text-align:center">
+        <div style="font-family:Syne,sans-serif;font-weight:700;font-size:18px;color:var(--ink2)">${diag.concentracion.total_tramos}</div>
+        <div style="font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);letter-spacing:0.08em">TRAMOS</div>
+      </div>
+    </div>
+  </div>`;
+
+  // ② TRAMOS CRÍTICOS
+  html += `<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+    <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">2</span>
+    <div style="font-family:Syne Mono,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;margin-top:4px">Tramos críticos a re-rutear</div>`;
+
+  diag.criticos.forEach((t, i) => {
+    const regColor = (t.regime || '').toLowerCase().includes('sensitive') || (t.regime || '').toLowerCase().includes('free')
+      ? '#E03131' : '#E8B53A';
+    html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="font-family:Syne,sans-serif;font-weight:700;font-size:18px;color:var(--accent);min-width:36px;text-align:right">${t.pct}%</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-family:Syne Mono,monospace;font-size:10px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.arc_id}</div>
+        <div style="font-family:Syne Mono,monospace;font-size:9px;color:var(--muted)">${String(t.hour).padStart(2,'0')}:00 h · ≈${t.R.toLocaleString()} personas</div>
+      </div>
+      <div style="font-family:Syne Mono,monospace;font-size:9px;padding:2px 6px;border-radius:3px;background:${regColor}22;color:${regColor};white-space:nowrap">${t.regime || '—'}</div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  // ③ CUÁNDO Y EN QUÉ CONDICIÓN
+  html += `<div style="position:relative;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+    <span style="position:absolute;left:-8px;top:-4px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--bg);font-family:Syne,sans-serif;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">3</span>
+    <div style="font-family:Syne Mono,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;margin-top:4px">Perfil horario de aporte</div>`;
+
+  // Mini barchart de perfil horario
+  const maxPct = Math.max(...diag.perfilHorario.map(h => h.pct), 1);
+  diag.perfilHorario.forEach(h => {
+    const barW = Math.round(h.pct / maxPct * 100);
+    html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+      <div style="font-family:Syne Mono,monospace;font-size:9px;color:var(--muted);min-width:28px;text-align:right">${String(h.hour).padStart(2,'0')}h</div>
+      <div style="flex:1;height:10px;background:var(--border);border-radius:2px;overflow:hidden">
+        <div style="width:${barW}%;height:100%;background:var(--accent);border-radius:2px"></div>
+      </div>
+      <div style="font-family:Syne Mono,monospace;font-size:9px;color:var(--ink2);min-width:28px">${h.pct}%</div>
+    </div>`;
+  });
+
+  // Mezcla por régimen
+  html += `<div style="font-family:Syne Mono,monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin:12px 0 6px">Mezcla por régimen</div>`;
+  diag.regimenes.forEach(r => {
+    const regColor = r.regime.toLowerCase().includes('sensitive') || r.regime.toLowerCase().includes('free')
+      ? '#E03131' : (r.regime.toLowerCase().includes('transit') ? '#E8B53A' : '#2C9E5B');
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <div style="width:10px;height:10px;border-radius:2px;background:${regColor};flex-shrink:0"></div>
+      <div style="font-family:Syne,sans-serif;font-size:11px;color:var(--ink);flex:1">${r.regime}</div>
+      <div style="font-family:Syne Mono,monospace;font-size:10px;font-weight:700;color:${regColor}">${r.pct}%</div>
+    </div>`;
+  });
+
+  html += `<div style="font-family:Syne,sans-serif;font-size:11px;color:var(--ink2);margin-top:10px;padding:8px 10px;background:var(--surface);border-radius:6px;border-left:3px solid var(--accent)">
+    ${diag.mensajeRegimen}
+  </div>`;
+  html += `</div>`;
+
+  panel.innerHTML = html;
+}
+
+// ── HOOK: cuando se carga _camionDiagData, re-renderizar si hay ruta activa ──
+function _ruidoOnDiagDataReady() {
+  const finalId = ruidoAnimState.targetId;
+  if (finalId && gpsLayers[finalId]) {
+    _ruidoRenderVehiculoPanel(gpsLayers[finalId]);
+  }
 }

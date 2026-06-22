@@ -347,13 +347,6 @@
     <div id="bus-chips" style="display:flex;gap:6px;flex-wrap:wrap"></div>
   </div>
 
-  <!-- Gráfico de barras — ancho completo abajo -->
-  <div id="bus-stats-panel" class="bus-stats-panel" style="display:none">
-    <div class="bsp-chart-wrap">
-      <canvas id="chart-bus-stats" height="90"></canvas>
-    </div>
-  </div>
-
   
 
 </div>
@@ -387,75 +380,125 @@
 
 <!-- Sub-panel: Ruido -->
 <div id="sub-tab-ruido" class="sub-tab-panel">
-<div class="gps-section">
 
-  <div class="gps-topbar">
+  <!-- Barra de estado global del panel Ruido -->
+  <div class="gps-topbar" style="padding:8px 20px;border-bottom:1px solid var(--border)">
     <span class="gps-status" id="ruido-status">Selecciona un camión en la pestaña Exposición para ver su exposición a ruido</span>
     <span class="gps-status" id="ruido-window-badge" style="display:none;color:var(--ink2)"></span>
   </div>
 
-  <div class="gps-main-row">
+  <!-- Sub-pestañas internas: Vehículo | Impacto Poblacional -->
+  <div class="sub-tabs" id="ruido-inner-tabs" style="padding:0 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+    <button class="sub-tab active" id="ruido-tab-vehiculo-btn"
+            onclick="ruidoSwitchInnerTab('vehiculo', this)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="width:12px;height:12px">
+        <rect x="1" y="9" width="14" height="5" rx="1"/>
+        <path d="M3 9V6l2-4h6l2 4v3"/>
+        <circle cx="4.5" cy="13" r="1"/><circle cx="11.5" cy="13" r="1"/>
+      </svg>
+      Vehículo
+    </button>
+    <button class="sub-tab" id="ruido-tab-impacto-btn"
+            onclick="ruidoSwitchInnerTab('impacto', this)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="width:12px;height:12px">
+        <circle cx="8" cy="8" r="6"/>
+        <path d="M8 5v3l2 2"/>
+      </svg>
+      Impacto Poblacional
+    </button>
+  </div>
 
+  <!-- ══ PANEL VEHÍCULO ══════════════════════════════════════════════════════ -->
+  <div id="ruido-inner-vehiculo" class="ruido-inner-panel">
+  <div class="gps-section">
+    <div class="gps-main-row">
 
-    <!-- PANEL IZQUIERDO: estadísticas de ruido — contenido generado dinámicamente por ruido.js -->
-    <div class="gps-side-stats" id="ruido-side-stats"
-         style="display:none;flex-direction:column;padding-left:18px;overflow-y:auto">
-    </div>
-
-    <!-- PANEL DERECHO: mapa + barra de animación -->
-    <div class="gps-map-col">
-
-      <div id="map-ruido-empty" class="gps-map-empty">
-        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-          <path d="M9 5v14"/><path d="M13 2v20"/><path d="M5 9v6"/><path d="M17 7v10"/><path d="M21 9v6"/>
-        </svg>
-        <p>Evolución del ruido a lo largo de la ruta</p>
-        <span style="font-size:11px;color:var(--ink2)">Selecciona un camión en la pestaña Exposición para comenzar</span>
+      <!-- Diagnóstico lateral: generado por _ruidoRenderVehiculoPanel() -->
+      <div class="gps-side-stats" id="ruido-vehiculo-stats"
+           style="display:none;flex-direction:column;padding-left:18px;overflow-y:auto">
       </div>
 
-      <div class="map-gps-wrap" id="map-ruido-wrap" style="position:relative;display:none">
-        <div class="via-indicator" id="ruido-hour-badge" style="display:none">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:13px;height:13px;flex-shrink:0">
-            <circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/>
+      <!-- Mapa + animación (comparte el mismo mapa Leaflet map-ruido) -->
+      <div class="gps-map-col">
+        <div id="ruido-vehiculo-empty" class="gps-map-empty">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <rect x="1" y="13" width="22" height="7" rx="1"/>
+            <path d="M3 13V9l3-6h12l3 6v4"/>
+            <circle cx="6" cy="19" r="1.5"/><circle cx="18" cy="19" r="1.5"/>
           </svg>
-          <span class="via-indicator-name" id="ruido-hour-badge-text">—</span>
+          <p>Diagnóstico de ruteo del vehículo</p>
+          <span style="font-size:11px;color:var(--ink2)">Selecciona un camión específico en Exposición para ver dónde y cuándo genera ruido evitable</span>
         </div>
-        <div id="map-ruido" style="height:560px;border:1px solid var(--border);border-radius:4px 4px 0 0"></div>
-      </div>
-
-      <div id="ruido-anim-bar" class="anim-bar" style="display:flex">
-        <button class="anim-btn" id="ruido-anim-play" onclick="ruidoAnimPlay()" title="Animar exposición a ruido">
-          <svg id="ruido-anim-icon-play" viewBox="0 0 16 16" fill="currentColor"><polygon points="4,2 14,8 4,14"/></svg>
-          <svg id="ruido-anim-icon-pause" viewBox="0 0 16 16" fill="currentColor" style="display:none"><rect x="3" y="2" width="3.5" height="12"/><rect x="9.5" y="2" width="3.5" height="12"/></svg>
-        </button>
-        <button class="anim-btn" onclick="ruidoAnimReset()" title="Reiniciar">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8a6 6 0 106-6H4M4 2v4H8"/></svg>
-        </button>
-        <div class="anim-track-wrap">
-          <div class="anim-track" id="ruido-anim-track">
-            <div class="anim-fill" id="ruido-anim-fill"></div>
-            <div class="anim-thumb" id="ruido-anim-thumb"></div>
+        <div class="map-gps-wrap" id="ruido-vehiculo-map-wrap" style="position:relative;display:none">
+          <div class="via-indicator" id="ruido-hour-badge" style="display:none">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:13px;height:13px;flex-shrink:0">
+              <circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/>
+            </svg>
+            <span class="via-indicator-name" id="ruido-hour-badge-text">—</span>
           </div>
+          <div id="map-ruido" style="height:520px;border:1px solid var(--border);border-radius:4px 4px 0 0"></div>
         </div>
-        <span class="anim-label" id="ruido-anim-label">0%</span>
-        <div class="anim-speed-wrap">
-          <span class="ctrl-lbl">Velocidad</span>
-          <select class="gps-select" id="ruido-anim-speed" style="min-width:80px;padding:4px 24px 4px 8px">
-            <option value="0.3">Lenta</option>
-            <option value="1" selected>Normal</option>
-            <option value="2.5">Rápida</option>
-            <option value="6">Muy rápida</option>
-          </select>
+        <div id="ruido-anim-bar" class="anim-bar" style="display:flex">
+          <button class="anim-btn" id="ruido-anim-play" onclick="ruidoAnimPlay()" title="Animar exposición a ruido">
+            <svg id="ruido-anim-icon-play" viewBox="0 0 16 16" fill="currentColor"><polygon points="4,2 14,8 4,14"/></svg>
+            <svg id="ruido-anim-icon-pause" viewBox="0 0 16 16" fill="currentColor" style="display:none"><rect x="3" y="2" width="3.5" height="12"/><rect x="9.5" y="2" width="3.5" height="12"/></svg>
+          </button>
+          <button class="anim-btn" onclick="ruidoAnimReset()" title="Reiniciar">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8a6 6 0 106-6H4M4 2v4H8"/></svg>
+          </button>
+          <div class="anim-track-wrap">
+            <div class="anim-track" id="ruido-anim-track">
+              <div class="anim-fill" id="ruido-anim-fill"></div>
+              <div class="anim-thumb" id="ruido-anim-thumb"></div>
+            </div>
+          </div>
+          <span class="anim-label" id="ruido-anim-label">0%</span>
+          <div class="anim-speed-wrap">
+            <span class="ctrl-lbl">Velocidad</span>
+            <select class="gps-select" id="ruido-anim-speed" style="min-width:80px;padding:4px 24px 4px 8px">
+              <option value="0.3">Lenta</option>
+              <option value="1" selected>Normal</option>
+              <option value="2.5">Rápida</option>
+              <option value="6">Muy rápida</option>
+            </select>
+          </div>
+          <span class="anim-note" id="ruido-anim-note">Selecciona un camión para animar</span>
         </div>
-        <span class="anim-note" id="ruido-anim-note">Selecciona un camión para animar</span>
+      </div><!-- end gps-map-col -->
+
+    </div><!-- end gps-main-row -->
+  </div>
+  </div><!-- end ruido-inner-vehiculo -->
+
+  <!-- ══ PANEL IMPACTO POBLACIONAL ══════════════════════════════════════════ -->
+  <div id="ruido-inner-impacto" class="ruido-inner-panel" style="display:none">
+  <div class="gps-section">
+    <div class="gps-main-row">
+
+      <!-- Panel estadístico: generado por _ruidoRenderStatsPanel() -->
+      <div class="gps-side-stats" id="ruido-side-stats"
+           style="display:none;flex-direction:column;padding-left:18px;overflow-y:auto">
       </div>
 
-    </div><!-- end gps-map-col -->
+      <!-- Mapa de ruido (el mismo contenedor map-ruido, movido aquí) -->
+      <div class="gps-map-col">
+        <div id="map-ruido-empty" class="gps-map-empty">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <path d="M9 5v14"/><path d="M13 2v20"/><path d="M5 9v6"/><path d="M17 7v10"/><path d="M21 9v6"/>
+          </svg>
+          <p>Evolución del ruido a lo largo de la ruta</p>
+          <span style="font-size:11px;color:var(--ink2)">Selecciona un camión en la pestaña Exposición para comenzar</span>
+        </div>
+        <div class="map-gps-wrap" id="map-ruido-wrap" style="position:relative;display:none">
+          <div id="map-ruido-impacto" style="height:520px;border:1px solid var(--border);border-radius:4px 4px 0 0"></div>
+        </div>
+      </div><!-- end gps-map-col -->
 
-  </div><!-- end gps-main-row -->
+    </div><!-- end gps-main-row -->
+  </div>
+  </div><!-- end ruido-inner-impacto -->
 
-</div>
-</div>
+</div><!-- end sub-tab-ruido -->
 
 </div><!-- end tab-gps -->
 
