@@ -69,11 +69,6 @@
     <span class="gps-status" id="gps-status">Selecciona una empresa para cargar sus rutas</span>
     <span class="gps-status" id="stats-csv-status" style="color:var(--alt);display:none"></span>
     <span id="h3-csv-status" class="gps-status"></span>
-    <input type="checkbox" id="h3-overlay-toggle" style="display:none">
-    <button id="h3-toggle-btn" class="upload-btn" onclick="h3ToggleBtn()"
-      style="background:var(--surface);border:1px solid var(--border);color:var(--ink2);transition:background 0.15s,color 0.15s">
-      ⬡ Hexágonos
-    </button>
     <div class="gps-filters" id="gps-filters" style="display:none">
       <span class="ctrl-lbl" style="display:none">Tipo</span>
       <select class="gps-select" id="gps-tipo-sel" onchange="filterBuses()" style="display:none">
@@ -138,6 +133,15 @@
 <!-- Sub-panel: Exposición -->
 <div id="sub-tab-exposicion" class="sub-tab-panel active">
 <div class="gps-section">
+
+  <!-- Botón Hexágonos: exclusivo de Exposición -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+    <input type="checkbox" id="h3-overlay-toggle" style="display:none">
+    <button id="h3-toggle-btn" class="upload-btn" onclick="h3ToggleBtn()"
+      style="background:var(--surface);border:1px solid var(--border);color:var(--ink2);transition:background 0.15s,color 0.15s">
+      ⬡ Hexágonos
+    </button>
+  </div>
 
   <!-- Fila: paneles hover -->
   <div class="gps-hover-panels-row" id="gps-hover-row" style="display:none">
