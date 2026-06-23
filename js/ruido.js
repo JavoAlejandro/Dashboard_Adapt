@@ -205,21 +205,19 @@ function ruidoSyncRoute(busId) {
     return;
   }
 
-  // Limpiar también capas de segmentos de la ruta anterior
+  // Limpiar también segmentos de arco de la ruta anterior
   _ruidoClearSegLayers();
   _ruidoClearAnimSegs();
 
   document.getElementById('map-ruido-empty').style.display = 'none';
   document.getElementById('map-ruido-wrap').style.display  = 'block';
 
-  // Ruta estática: polilínea uniforme (modo ruido) o segmentos coloreados
-  if (_ruidoCapaModo !== 'ruido' && _ruidoHasArcos(entry)) {
-    _ruidoPaintRouteByArcos(entry);
-  } else {
-    _ruidoRouteLayer = L.polyline(entry.coords, {
-      color: entry.color, weight: 3, opacity: 0.5,
-    }).addTo(_ruidoMap);
-  }
+  // Ruta base (semitransparente, como fondo de los segmentos)
+  _ruidoRouteLayer = L.polyline(entry.coords, {
+    color: entry.color, weight: 3, opacity: 0.3,
+  }).addTo(_ruidoMap);
+
+  _ruidoMap.fitBounds(_ruidoRouteLayer.getBounds(), { padding: [30, 30] });
 
   _ruidoMap.fitBounds(_ruidoRouteLayer.getBounds(), { padding: [30, 30] });
 
@@ -660,61 +658,39 @@ function _ruidoCalcularEstadisticas(entry) {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// COLOREADO DE SEGMENTOS DE POLILÍNEA OSRM — dos capas según README_2
+// SEGMENTOS DE ARCO — capa superpuesta sobre los hexágonos de ruido
 //
 // Cuando el GeoJSON trae coord_arcos (generado por BASE_test.py --camion-hora),
-// la ruta se colorea directamente como segmentos de la polilínea, sin hexágonos.
-// Cada punto[i] tiene {regime, dLdk} → color. Puntos consecutivos del mismo
-// color se agrupan en un único L.polyline para minimizar objetos Leaflet.
+// la ruta se dibuja como segmentos coloreados por dLdk encima de los hexágonos.
+// No hay selector de modo: siempre se muestran ambas capas a la vez.
 //
-// Modos: 'ruido' | 'regime' | 'dldk'
+// Gradiente dLdk divergente centrado en 0 (README_2: ±p95 = ±1.71):
+//   azul (#0571B0) → gris (#F7F7F7) → rojo (#CA0020)
 // ══════════════════════════════════════════════════════════════════════════════
 
-let _ruidoCapaModo   = 'ruido';   // modo activo
-let _ruidoSegLayers  = [];        // L.polyline[] de segmentos coloreados (ruta estática)
-let _ruidoAnimSegs   = [];        // L.polyline[] de segmentos coloreados (animación)
+let _ruidoSegLayers = [];   // L.polyline[] ruta estática coloreada
+let _ruidoAnimSegs  = [];   // L.polyline[] segmentos de animación
 
-// ── Paleta régimen ────────────────────────────────────────────────────────────
-const REGIME_COLORS = {
-  sensitive:  '#2E9BE6',
-  transition: '#F5A623',
-  saturated:  '#E53935',
-};
-function _ruidoRegimeColor(regime) {
-  const k = (regime || '').toLowerCase();
-  if (k.includes('sensitive') || k.includes('free'))    return REGIME_COLORS.sensitive;
-  if (k.includes('saturated') || k.includes('congest')) return REGIME_COLORS.saturated;
-  return REGIME_COLORS.transition;
-}
-
-// ── Gradiente divergente dLdk ─────────────────────────────────────────────────
+// ── Gradiente dLdk ────────────────────────────────────────────────────────────
 const DLDK_DOMAIN = 1.71;
 const DLDK_RAMP = [
-  { t: 0.00, r: 5,   g: 113, b: 176 },
+  { t: 0.00, r: 5,   g: 113, b: 176 },  // azul  — reduce ruido
   { t: 0.25, r: 146, g: 197, b: 222 },
-  { t: 0.50, r: 247, g: 247, b: 247 },
+  { t: 0.50, r: 247, g: 247, b: 247 },  // gris  — neutro
   { t: 0.75, r: 244, g: 165, b: 130 },
-  { t: 1.00, r: 202, g: 0,   b: 32  },
+  { t: 1.00, r: 202, g: 0,   b: 32  },  // rojo  — aporta ruido
 ];
 function _ruidoDldkColor(dLdk) {
   const t = Math.max(0, Math.min(1, ((dLdk || 0) + DLDK_DOMAIN) / (2 * DLDK_DOMAIN)));
   let lo = DLDK_RAMP[0], hi = DLDK_RAMP[DLDK_RAMP.length - 1];
   for (let i = 1; i < DLDK_RAMP.length; i++) {
-    if (t <= DLDK_RAMP[i].t) { lo = DLDK_RAMP[i-1]; hi = DLDK_RAMP[i]; break; }
+    if (t <= DLDK_RAMP[i].t) { lo = DLDK_RAMP[i - 1]; hi = DLDK_RAMP[i]; break; }
   }
   const f = (t - lo.t) / Math.max(hi.t - lo.t, 1e-9);
   return `rgb(${Math.round(lo.r+(hi.r-lo.r)*f)},${Math.round(lo.g+(hi.g-lo.g)*f)},${Math.round(lo.b+(hi.b-lo.b)*f)})`;
 }
 
-// ── Obtener color de un punto desde coord_arcos ───────────────────────────────
-function _ruidoColorAtPoint(arco) {
-  if (!arco) return null;
-  if (_ruidoCapaModo === 'regime') return _ruidoRegimeColor(arco.regime);
-  if (_ruidoCapaModo === 'dldk')   return _ruidoDldkColor(arco.dLdk);
-  return null;   // modo 'ruido': no usa coord_arcos
-}
-
-// ── ¿Tiene esta ruta datos de arcos? ─────────────────────────────────────────
+// ── ¿Tiene coord_arcos con datos? ────────────────────────────────────────────
 function _ruidoHasArcos(entry) {
   const ca = entry?.feature?.properties?.coord_arcos;
   return Array.isArray(ca) && ca.some(a => a != null);
@@ -730,29 +706,25 @@ function _ruidoClearAnimSegs() {
   _ruidoAnimSegs = [];
 }
 
-// ── Construir segmentos coloreados desde coord_arcos ─────────────────────────
-// coords: [[lat,lng],...] (Leaflet order)
-// arcos:  coord_arcos array del GeoJSON (mismo índice)
-// upTo:   cuántos puntos incluir (undefined = todos)
-// target: array donde acumular los L.polyline creados
+// ── Construir segmentos coloreados por dLdk ───────────────────────────────────
+// Agrupa puntos consecutivos del mismo color en un único L.polyline.
+// coords: [[lat,lng],...] · arcos: coord_arcos del GeoJSON · upTo: nº puntos
 function _ruidoBuildSegments(coords, arcos, upTo, target) {
-  const n = upTo !== undefined ? Math.min(upTo, coords.length) : coords.length;
+  const n = Math.min(upTo ?? coords.length, coords.length);
   if (n < 2) return;
 
   let segCoords = [coords[0]];
-  let segColor  = _ruidoColorAtPoint(arcos[0]);
+  let segColor  = _ruidoDldkColor(arcos[0]?.dLdk);
 
   for (let i = 1; i < n; i++) {
-    const c = _ruidoColorAtPoint(arcos[i]);
+    const c = _ruidoDldkColor(arcos[i]?.dLdk);
     if (c === segColor) {
       segCoords.push(coords[i]);
     } else {
-      // Cerrar segmento actual (incluir punto de unión para continuidad)
-      segCoords.push(coords[i]);
+      segCoords.push(coords[i]);   // punto de unión para continuidad
       if (segCoords.length >= 2) {
-        const col = segColor || 'var(--accent)';
         target.push(L.polyline(segCoords, {
-          color: col, weight: 4, opacity: 0.9, smoothFactor: 1,
+          color: segColor, weight: 5, opacity: 1, smoothFactor: 1,
           interactive: false,
         }).addTo(_ruidoMap));
       }
@@ -760,67 +732,36 @@ function _ruidoBuildSegments(coords, arcos, upTo, target) {
       segColor  = c;
     }
   }
-  // Último segmento
   if (segCoords.length >= 2) {
     target.push(L.polyline(segCoords, {
-      color: segColor || 'var(--accent)', weight: 4, opacity: 0.9, smoothFactor: 1,
+      color: segColor, weight: 5, opacity: 1, smoothFactor: 1,
       interactive: false,
     }).addTo(_ruidoMap));
   }
 }
 
-// ── Pintar ruta estática completa coloreada por arcos ─────────────────────────
-function _ruidoPaintRouteByArcos(entry) {
+// ── Pintar segmentos estáticos completos ──────────────────────────────────────
+function _ruidoPaintSegmentos(entry) {
   _ruidoClearSegLayers();
-  if (!_ruidoMap || !entry) return;
-  const arcos  = entry.feature.properties.coord_arcos || [];
-  const coords = entry.coords;   // [[lat,lng],...]
-  _ruidoBuildSegments(coords, arcos, undefined, _ruidoSegLayers);
+  if (!_ruidoMap || !entry || !_ruidoHasArcos(entry)) return;
+  _ruidoBuildSegments(
+    entry.coords,
+    entry.feature.properties.coord_arcos,
+    undefined,
+    _ruidoSegLayers
+  );
 }
 
 // ── Actualizar segmentos animados hasta el punto `shown` ─────────────────────
 function _ruidoUpdateAnimSegments(entry, shown) {
   _ruidoClearAnimSegs();
-  if (!_ruidoMap || !entry) return;
-  const arcos  = entry.feature.properties.coord_arcos || [];
-  const coords = entry.coords;
-  _ruidoBuildSegments(coords, arcos, shown, _ruidoAnimSegs);
-}
-
-// ── Toggle de modo ────────────────────────────────────────────────────────────
-function ruidoSetCapaModo(modo) {
-  _ruidoCapaModo = modo;
-
-  ['ruido', 'regime', 'dldk'].forEach(m => {
-    const btn = document.getElementById(`ruido-capa-${m}`);
-    if (!btn) return;
-    btn.style.background  = m === modo ? 'var(--ink)' : 'transparent';
-    btn.style.color       = m === modo ? 'var(--bg)'  : 'var(--muted)';
-    btn.style.borderColor = m === modo ? 'var(--ink)' : 'var(--border)';
-  });
-
-  const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
-  if (!entry) return;
-
-  if (modo !== 'ruido' && _ruidoHasArcos(entry)) {
-    // Modos de arco: pintar segmentos, quitar hexágonos
-    if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
-    _ruidoCurrentHour = null;
-    if (_ruidoRouteLayer) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
-    _ruidoPaintRouteByArcos(entry);
-  } else {
-    // Modo ruido o sin coord_arcos: quitar segmentos, restaurar ruta + hexágonos
-    _ruidoClearSegLayers();
-    if (!_ruidoRouteLayer) {
-      _ruidoRouteLayer = L.polyline(entry.coords, { color: entry.color, weight: 3, opacity: 0.5 }).addTo(_ruidoMap);
-    }
-    const prev = _ruidoCurrentHour;
-    _ruidoCurrentHour = null;
-    if (prev != null) _ruidoPaintHour(prev);
-    else _ruidoPaintForPoint(entry, 0);
-  }
-
-  _ruidoUpdateLegend();
+  if (!_ruidoMap || !entry || !_ruidoHasArcos(entry)) return;
+  _ruidoBuildSegments(
+    entry.coords,
+    entry.feature.properties.coord_arcos,
+    shown,
+    _ruidoAnimSegs
+  );
 }
 
 // ─── EXTRAER HORA DESDE coord_timestamps (formato "HH:MM") ───────────────────
@@ -844,12 +785,12 @@ function _ruidoPaintHour(hour) {
 
   if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
 
-  // En modos de arco los segmentos de polilínea ya están pintados — nada que hacer aquí
-  if (_ruidoCapaModo === 'regime' || _ruidoCapaModo === 'dldk') return;
-
-  // Modo 'ruido': hexágonos de nivel ambiente
+  // Hexágonos de nivel de ruido ambiente
   if (!_ruidoByHour || !_ruidoByHour.has(hour)) {
     _ruidoUpdateHourBadge(hour, 0);
+    // Aun sin hexágonos, pintar segmentos si hay coord_arcos
+    const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
+    if (entry) _ruidoPaintSegmentos(entry);
     return;
   }
 
@@ -882,6 +823,10 @@ function _ruidoPaintHour(hour) {
 
   _ruidoLayerGrp.addTo(_ruidoMap);
   _ruidoUpdateHourBadge(hour, hexMap.size);
+
+  // Superponer segmentos de arco coloreados por dLdk (si el GeoJSON los trae)
+  const _entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
+  if (_entry) _ruidoPaintSegmentos(_entry);
 }
 
 function _ruidoUpdateHourBadge(hour, nHex) {
@@ -922,16 +867,12 @@ function ruidoAnimPlay() {
 
   const entry = gpsLayers[targetId];
   if (_ruidoRouteLayer) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
-  _ruidoClearSegLayers();   // quitar ruta estática coloreada si la había
+  _ruidoClearSegLayers();
 
   if (!ruidoAnimState.animLayer) {
     ruidoAnimState.animLayer = L.polyline([], {
       color: entry.color, weight: 4, opacity: 1, smoothFactor: 1,
     }).addTo(_ruidoMap);
-    // En modos de arco la animLayer queda transparente — los segmentos hacen el trabajo
-    if (_ruidoCapaModo !== 'ruido' && _ruidoHasArcos(entry)) {
-      ruidoAnimState.animLayer.setStyle({ opacity: 0 });
-    }
   }
   if (!ruidoAnimState.animDot) {
     ruidoAnimState.animDot = L.circleMarker(entry.coords[0], {
@@ -964,15 +905,13 @@ function ruidoAnimFrame(ts) {
 
   const shown = Math.max(2, Math.floor(ruidoAnimState.progress * (n - 1)) + 1);
 
-  // Trazar recorrido: en modos de arco con coord_arcos → segmentos coloreados
-  // En modo ruido (o sin datos) → polilínea uniforme como antes
-  if (_ruidoCapaModo !== 'ruido' && _ruidoHasArcos(entry)) {
-    ruidoAnimState.animLayer.setLatLngs([]);   // mantener invisible
-    _ruidoUpdateAnimSegments(entry, shown);
-  } else {
-    _ruidoClearAnimSegs();
-    ruidoAnimState.animLayer.setLatLngs(coords.slice(0, shown));
-  }
+  // Polilínea de progreso (semitransparente si hay arcos, para que se vean los segmentos)
+  const hasArcos = _ruidoHasArcos(entry);
+  ruidoAnimState.animLayer.setStyle({ opacity: hasArcos ? 0.2 : 1 });
+  ruidoAnimState.animLayer.setLatLngs(coords.slice(0, shown));
+
+  // Segmentos coloreados por dLdk encima
+  if (hasArcos) _ruidoUpdateAnimSegments(entry, shown);
 
   ruidoAnimState.animDot.setLatLng(coords[shown - 1]);
 
@@ -1004,14 +943,13 @@ function ruidoAnimReset() {
 
   _ruidoClearAnimSegs();
 
-  // Restaurar ruta estática
+  // Restaurar ruta base + segmentos de arco estáticos
   if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoMap) {
     const entry = gpsLayers[ruidoAnimState.targetId];
-    if (_ruidoCapaModo !== 'ruido' && _ruidoHasArcos(entry)) {
-      _ruidoPaintRouteByArcos(entry);
-    } else {
-      _ruidoRouteLayer = L.polyline(entry.coords, { color: entry.color, weight: 3, opacity: 0.5 }).addTo(_ruidoMap);
-    }
+    _ruidoRouteLayer = L.polyline(entry.coords, {
+      color: entry.color, weight: 3, opacity: _ruidoHasArcos(entry) ? 0.3 : 0.5,
+    }).addTo(_ruidoMap);
+    _ruidoPaintSegmentos(entry);
   }
 
   if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
@@ -1053,43 +991,32 @@ function _ruidoUpdateLegend() {
     document.getElementById('map-ruido')?.appendChild(leg);
   }
 
-  if (_ruidoCapaModo === 'regime') {
-    leg.innerHTML = `
-      <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px">Régimen de tráfico</div>
-      ${Object.entries({ Sensitive: REGIME_COLORS.sensitive, Transition: REGIME_COLORS.transition, Saturated: REGIME_COLORS.saturated })
-        .map(([label, color]) => `<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
-          <span style="width:10px;height:10px;border-radius:2px;background:${color};display:inline-block;flex-shrink:0"></span>
-          <span>${label}</span>
-        </div>`).join('')}`;
-    return;
-  }
-
-  if (_ruidoCapaModo === 'dldk') {
-    const stops = DLDK_RAMP.map(s => `rgb(${s.r},${s.g},${s.b}) ${(s.t*100).toFixed(0)}%`).join(',');
-    leg.innerHTML = `
-      <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">Intensidad dLdk</div>
-      <div style="height:8px;border-radius:2px;background:linear-gradient(to right,${stops});margin-bottom:4px"></div>
-      <div style="display:flex;justify-content:space-between">
-        <span>−${DLDK_DOMAIN}</span><span>0</span><span>+${DLDK_DOMAIN}</span>
-      </div>
-      <div style="margin-top:4px;font-size:8px;line-height:1.4">
-        azul = reduce · gris = neutro · rojo = aporta
-      </div>`;
-    return;
-  }
-
-  // Modo ruido (default)
+  // Leyenda de hexágonos (ruido ambiente)
   const gradStops = RUIDO_RAMP
     .map(s => `rgb(${s.r},${s.g},${s.b}) ${(s.t * 100).toFixed(0)}%`)
     .join(',');
+
+  // Leyenda de segmentos dLdk (si el GeoJSON los trae)
+  const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
+  const dldkStops = DLDK_RAMP
+    .map(s => `rgb(${s.r},${s.g},${s.b}) ${(s.t * 100).toFixed(0)}%`)
+    .join(',');
+  const dldkLeg = _ruidoHasArcos(entry) ? `
+    <div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--border)">
+      <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">Segmentos · dLdk</div>
+      <div style="height:5px;border-radius:2px;background:linear-gradient(to right,${dldkStops});margin-bottom:4px"></div>
+      <div style="display:flex;justify-content:space-between">
+        <span>reduce</span><span>neutro</span><span>aporta</span>
+      </div>
+    </div>` : '';
+
   leg.innerHTML = `
-    <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">
-      Nivel de ruido
-    </div>
+    <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">Nivel de ruido</div>
     <div style="height:8px;border-radius:2px;background:linear-gradient(to right,${gradStops});margin-bottom:4px"></div>
     <div style="display:flex;justify-content:space-between">
       <span>${_ruidoMinDb.toFixed(0)} dB</span><span>${_ruidoMaxDb.toFixed(0)} dB</span>
-    </div>`;
+    </div>
+    ${dldkLeg}`;
 }
 
 // ─── ENTRADA AL SUB-TAB RUIDO (llamado desde switchSubTab) ───────────────────
