@@ -205,12 +205,21 @@ function ruidoSyncRoute(busId) {
     return;
   }
 
+  // Limpiar también capas de segmentos de la ruta anterior
+  _ruidoClearSegLayers();
+  _ruidoClearAnimSegs();
+
   document.getElementById('map-ruido-empty').style.display = 'none';
   document.getElementById('map-ruido-wrap').style.display  = 'block';
 
-  _ruidoRouteLayer = L.polyline(entry.coords, {
-    color: entry.color, weight: 3, opacity: 0.5,
-  }).addTo(_ruidoMap);
+  // Ruta estática: polilínea uniforme (modo ruido) o segmentos coloreados
+  if (_ruidoCapaModo !== 'ruido' && _ruidoHasArcos(entry)) {
+    _ruidoPaintRouteByArcos(entry);
+  } else {
+    _ruidoRouteLayer = L.polyline(entry.coords, {
+      color: entry.color, weight: 3, opacity: 0.5,
+    }).addTo(_ruidoMap);
+  }
 
   _ruidoMap.fitBounds(_ruidoRouteLayer.getBounds(), { padding: [30, 30] });
 
@@ -413,7 +422,6 @@ async function _ruidoEnsureCamionLoaded() {
 
           _camionLoaded  = true;
           _camionLoading = false;
-          _ruidoBuildArcHexIndex(rows);   // índice h3→{regime,dLdk} por (oid,hour)
           _ruidoOnDiagDataReady();
           resolve(true);
         },
@@ -652,143 +660,164 @@ function _ruidoCalcularEstadisticas(entry) {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// COLOREADO DE ARCOS — dos capas según README_2
+// COLOREADO DE SEGMENTOS DE POLILÍNEA OSRM — dos capas según README_2
 //
-// Modo 'regime': cada hexágono se colorea por el régimen de tráfico del camión
-//   al pasar por ese arco (Sensitive / Transition / Saturated).
-// Modo 'dldk':   gradiente divergente centrado en 0 sobre dLdk — azul = reduce
-//   ruido, gris = neutro, rojo = donde más aporta.
+// Cuando el GeoJSON trae coord_arcos (generado por BASE_test.py --camion-hora),
+// la ruta se colorea directamente como segmentos de la polilínea, sin hexágonos.
+// Cada punto[i] tiene {regime, dLdk} → color. Puntos consecutivos del mismo
+// color se agrupan en un único L.polyline para minimizar objetos Leaflet.
 //
-// Los hexágonos se obtienen de _camionDiagData (arc_id × hour → h3 via
-// _camionArcHexIndex), que ya está indexado al cargar camion_hora_rm.csv.
-// El coloreado reemplaza (no acumula) la capa de hexágonos ambiente por hora.
+// Modos: 'ruido' | 'regime' | 'dldk'
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── Modo activo: 'ruido' | 'regime' | 'dldk' ─────────────────────────────────
-let _ruidoCapaModo = 'ruido';   // default: nivel de ruido ambiente (comportamiento original)
+let _ruidoCapaModo   = 'ruido';   // modo activo
+let _ruidoSegLayers  = [];        // L.polyline[] de segmentos coloreados (ruta estática)
+let _ruidoAnimSegs   = [];        // L.polyline[] de segmentos coloreados (animación)
 
-// ── Índice h3 → {regime, dLdk} por (oid, hour) ────────────────────────────────
-// Construido al parsear camion_hora_rm.csv. Permite lookup O(1) en cada frame.
-// Estructura: Map<oid, Map<hour, Map<h3_index, {regime, dLdk}>>>
-let _camionArcHexIndex = null;
-
-// Se llama desde _ruidoEnsureCamionLoaded después de parsear todas las filas
-function _ruidoBuildArcHexIndex(rows) {
-  _camionArcHexIndex = new Map();
-  rows.forEach(r => {
-    const oid   = String(r.owner_id ?? '');
-    const h3    = String(r.h3_index ?? '');
-    const hour  = Math.round(+r.hour);
-    const dLdk  = +r.dLdk  || 0;
-    const regime = String(r.regime ?? '');
-    if (!oid || !h3 || isNaN(hour)) return;
-    if (!_camionArcHexIndex.has(oid)) _camionArcHexIndex.set(oid, new Map());
-    const byHour = _camionArcHexIndex.get(oid);
-    if (!byHour.has(hour)) byHour.set(hour, new Map());
-    // Si el h3 aparece en varios arcos de la misma hora, tomar el dLdk de mayor |valor|
-    const prev = byHour.get(hour).get(h3);
-    if (!prev || Math.abs(dLdk) > Math.abs(prev.dLdk)) {
-      byHour.get(hour).set(h3, { regime, dLdk });
-    }
-  });
-}
-
-// ── Paleta régimen (según README_2) ──────────────────────────────────────────
+// ── Paleta régimen ────────────────────────────────────────────────────────────
 const REGIME_COLORS = {
-  sensitive:  '#2E9BE6',   // celeste  — free-flow, mayor ruido marginal
-  transition: '#F5A623',   // ámbar    — 87% de los tramos
-  saturated:  '#E53935',   // rojo     — congestión severa
+  sensitive:  '#2E9BE6',
+  transition: '#F5A623',
+  saturated:  '#E53935',
 };
 function _ruidoRegimeColor(regime) {
   const k = (regime || '').toLowerCase();
-  if (k.includes('sensitive') || k.includes('free'))  return REGIME_COLORS.sensitive;
+  if (k.includes('sensitive') || k.includes('free'))    return REGIME_COLORS.sensitive;
   if (k.includes('saturated') || k.includes('congest')) return REGIME_COLORS.saturated;
   return REGIME_COLORS.transition;
 }
 
-// ── Gradiente divergente dLdk (README_2: ±p95 = ±1.71, recortado) ────────────
-const DLDK_DOMAIN = 1.71;   // ±p95 según README_2
+// ── Gradiente divergente dLdk ─────────────────────────────────────────────────
+const DLDK_DOMAIN = 1.71;
 const DLDK_RAMP = [
-  { t: 0.00, r: 5,   g: 113, b: 176 },  // #0571B0 — azul (reduce ruido)
-  { t: 0.25, r: 146, g: 197, b: 222 },  // #92C5DE
-  { t: 0.50, r: 247, g: 247, b: 247 },  // #F7F7F7 — gris neutro
-  { t: 0.75, r: 244, g: 165, b: 130 },  // #F4A582
-  { t: 1.00, r: 202, g: 0,   b: 32  },  // #CA0020 — rojo (aporta más)
+  { t: 0.00, r: 5,   g: 113, b: 176 },
+  { t: 0.25, r: 146, g: 197, b: 222 },
+  { t: 0.50, r: 247, g: 247, b: 247 },
+  { t: 0.75, r: 244, g: 165, b: 130 },
+  { t: 1.00, r: 202, g: 0,   b: 32  },
 ];
 function _ruidoDldkColor(dLdk) {
-  const t = Math.max(0, Math.min(1, (dLdk + DLDK_DOMAIN) / (2 * DLDK_DOMAIN)));
+  const t = Math.max(0, Math.min(1, ((dLdk || 0) + DLDK_DOMAIN) / (2 * DLDK_DOMAIN)));
   let lo = DLDK_RAMP[0], hi = DLDK_RAMP[DLDK_RAMP.length - 1];
   for (let i = 1; i < DLDK_RAMP.length; i++) {
     if (t <= DLDK_RAMP[i].t) { lo = DLDK_RAMP[i-1]; hi = DLDK_RAMP[i]; break; }
   }
   const f = (t - lo.t) / Math.max(hi.t - lo.t, 1e-9);
-  const r = Math.round(lo.r + (hi.r - lo.r) * f);
-  const g = Math.round(lo.g + (hi.g - lo.g) * f);
-  const b = Math.round(lo.b + (hi.b - lo.b) * f);
-  return `rgba(${r},${g},${b},0.75)`;
+  return `rgb(${Math.round(lo.r+(hi.r-lo.r)*f)},${Math.round(lo.g+(hi.g-lo.g)*f)},${Math.round(lo.b+(hi.b-lo.b)*f)})`;
 }
 
-// ── Pintar capa de arcos sobre el mapa para una hora dada ─────────────────────
-// Reemplaza completamente la capa _ruidoLayerGrp (la misma que usa el ruido
-// ambiente). El caller (_ruidoPaintHour) ya limpia la capa anterior.
-function _ruidoPaintArcos(hour) {
-  const targetId = ruidoAnimState.targetId;
-  if (!targetId || !gpsLayers[targetId]) return false;
-  if (!_camionArcHexIndex) return false;
+// ── Obtener color de un punto desde coord_arcos ───────────────────────────────
+function _ruidoColorAtPoint(arco) {
+  if (!arco) return null;
+  if (_ruidoCapaModo === 'regime') return _ruidoRegimeColor(arco.regime);
+  if (_ruidoCapaModo === 'dldk')   return _ruidoDldkColor(arco.dLdk);
+  return null;   // modo 'ruido': no usa coord_arcos
+}
 
-  const oid     = String(gpsLayers[targetId].feature.properties.owner_id ?? '');
-  const byHour  = _camionArcHexIndex.get(oid);
-  if (!byHour) return false;
-  const hexMap  = byHour.get(hour);
-  if (!hexMap || hexMap.size === 0) return false;
+// ── ¿Tiene esta ruta datos de arcos? ─────────────────────────────────────────
+function _ruidoHasArcos(entry) {
+  const ca = entry?.feature?.properties?.coord_arcos;
+  return Array.isArray(ca) && ca.some(a => a != null);
+}
 
-  _ruidoLayerGrp = L.layerGroup();
+// ── Limpiar capas de segmentos ────────────────────────────────────────────────
+function _ruidoClearSegLayers() {
+  _ruidoSegLayers.forEach(l => { try { _ruidoMap.removeLayer(l); } catch {} });
+  _ruidoSegLayers = [];
+}
+function _ruidoClearAnimSegs() {
+  _ruidoAnimSegs.forEach(l => { try { _ruidoMap.removeLayer(l); } catch {} });
+  _ruidoAnimSegs = [];
+}
 
-  hexMap.forEach(({ regime, dLdk }, hexId) => {
-    const latlngs = _ruidoH3ToLatLngs(hexId);
-    if (!latlngs) return;
+// ── Construir segmentos coloreados desde coord_arcos ─────────────────────────
+// coords: [[lat,lng],...] (Leaflet order)
+// arcos:  coord_arcos array del GeoJSON (mismo índice)
+// upTo:   cuántos puntos incluir (undefined = todos)
+// target: array donde acumular los L.polyline creados
+function _ruidoBuildSegments(coords, arcos, upTo, target) {
+  const n = upTo !== undefined ? Math.min(upTo, coords.length) : coords.length;
+  if (n < 2) return;
 
-    let fill, stroke;
-    if (_ruidoCapaModo === 'regime') {
-      fill   = _ruidoRegimeColor(regime);
-      stroke = fill;
+  let segCoords = [coords[0]];
+  let segColor  = _ruidoColorAtPoint(arcos[0]);
+
+  for (let i = 1; i < n; i++) {
+    const c = _ruidoColorAtPoint(arcos[i]);
+    if (c === segColor) {
+      segCoords.push(coords[i]);
     } else {
-      fill   = _ruidoDldkColor(dLdk);
-      stroke = fill;
+      // Cerrar segmento actual (incluir punto de unión para continuidad)
+      segCoords.push(coords[i]);
+      if (segCoords.length >= 2) {
+        const col = segColor || 'var(--accent)';
+        target.push(L.polyline(segCoords, {
+          color: col, weight: 4, opacity: 0.9, smoothFactor: 1,
+          interactive: false,
+        }).addTo(_ruidoMap));
+      }
+      segCoords = [coords[i]];
+      segColor  = c;
     }
-
-    L.polygon(latlngs, {
-      fillColor: fill, fillOpacity: 1,
-      color: stroke, weight: 0.5,
-      interactive: false, pane: 'ruidoPane',
-    }).addTo(_ruidoLayerGrp);
-  });
-
-  _ruidoLayerGrp.addTo(_ruidoMap);
-  _ruidoUpdateHourBadge(hour, hexMap.size);
-  return true;
+  }
+  // Último segmento
+  if (segCoords.length >= 2) {
+    target.push(L.polyline(segCoords, {
+      color: segColor || 'var(--accent)', weight: 4, opacity: 0.9, smoothFactor: 1,
+      interactive: false,
+    }).addTo(_ruidoMap));
+  }
 }
 
-// ── Cambiar modo de capa y repintar inmediatamente ────────────────────────────
-function ruidoSetCapaModo(modo) {
-  _ruidoCapaModo = modo;   // 'ruido' | 'regime' | 'dldk'
+// ── Pintar ruta estática completa coloreada por arcos ─────────────────────────
+function _ruidoPaintRouteByArcos(entry) {
+  _ruidoClearSegLayers();
+  if (!_ruidoMap || !entry) return;
+  const arcos  = entry.feature.properties.coord_arcos || [];
+  const coords = entry.coords;   // [[lat,lng],...]
+  _ruidoBuildSegments(coords, arcos, undefined, _ruidoSegLayers);
+}
 
-  // Actualizar botones del toggle
+// ── Actualizar segmentos animados hasta el punto `shown` ─────────────────────
+function _ruidoUpdateAnimSegments(entry, shown) {
+  _ruidoClearAnimSegs();
+  if (!_ruidoMap || !entry) return;
+  const arcos  = entry.feature.properties.coord_arcos || [];
+  const coords = entry.coords;
+  _ruidoBuildSegments(coords, arcos, shown, _ruidoAnimSegs);
+}
+
+// ── Toggle de modo ────────────────────────────────────────────────────────────
+function ruidoSetCapaModo(modo) {
+  _ruidoCapaModo = modo;
+
   ['ruido', 'regime', 'dldk'].forEach(m => {
     const btn = document.getElementById(`ruido-capa-${m}`);
     if (!btn) return;
-    btn.style.background   = m === modo ? 'var(--ink)' : 'transparent';
-    btn.style.color        = m === modo ? 'var(--bg)'  : 'var(--muted)';
-    btn.style.borderColor  = m === modo ? 'var(--ink)' : 'var(--border)';
+    btn.style.background  = m === modo ? 'var(--ink)' : 'transparent';
+    btn.style.color       = m === modo ? 'var(--bg)'  : 'var(--muted)';
+    btn.style.borderColor = m === modo ? 'var(--ink)' : 'var(--border)';
   });
 
-  // Forzar repintado de la hora actual
-  const prev = _ruidoCurrentHour;
-  _ruidoCurrentHour = null;
-  if (prev != null) _ruidoPaintHour(prev);
-  else {
-    const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
-    if (entry) _ruidoPaintForPoint(entry, 0);
+  const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
+  if (!entry) return;
+
+  if (modo !== 'ruido' && _ruidoHasArcos(entry)) {
+    // Modos de arco: pintar segmentos, quitar hexágonos
+    if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
+    _ruidoCurrentHour = null;
+    if (_ruidoRouteLayer) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
+    _ruidoPaintRouteByArcos(entry);
+  } else {
+    // Modo ruido o sin coord_arcos: quitar segmentos, restaurar ruta + hexágonos
+    _ruidoClearSegLayers();
+    if (!_ruidoRouteLayer) {
+      _ruidoRouteLayer = L.polyline(entry.coords, { color: entry.color, weight: 3, opacity: 0.5 }).addTo(_ruidoMap);
+    }
+    const prev = _ruidoCurrentHour;
+    _ruidoCurrentHour = null;
+    if (prev != null) _ruidoPaintHour(prev);
+    else _ruidoPaintForPoint(entry, 0);
   }
 
   _ruidoUpdateLegend();
@@ -810,18 +839,15 @@ function _ruidoPaintForPoint(entry, pointIdx) {
 }
 
 function _ruidoPaintHour(hour) {
-  if (hour === _ruidoCurrentHour) return;   // misma hora, no redibujar
+  if (hour === _ruidoCurrentHour) return;
   _ruidoCurrentHour = hour;
 
   if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
 
-  // Modos de arcos: delegar a _ruidoPaintArcos
-  if (_ruidoCapaModo === 'regime' || _ruidoCapaModo === 'dldk') {
-    if (_camionLoaded) _ruidoPaintArcos(hour);
-    return;
-  }
+  // En modos de arco los segmentos de polilínea ya están pintados — nada que hacer aquí
+  if (_ruidoCapaModo === 'regime' || _ruidoCapaModo === 'dldk') return;
 
-  // Modo 'ruido': comportamiento original — hexágonos de nivel ambiente
+  // Modo 'ruido': hexágonos de nivel ambiente
   if (!_ruidoByHour || !_ruidoByHour.has(hour)) {
     _ruidoUpdateHourBadge(hour, 0);
     return;
@@ -896,11 +922,16 @@ function ruidoAnimPlay() {
 
   const entry = gpsLayers[targetId];
   if (_ruidoRouteLayer) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
+  _ruidoClearSegLayers();   // quitar ruta estática coloreada si la había
 
   if (!ruidoAnimState.animLayer) {
     ruidoAnimState.animLayer = L.polyline([], {
       color: entry.color, weight: 4, opacity: 1, smoothFactor: 1,
     }).addTo(_ruidoMap);
+    // En modos de arco la animLayer queda transparente — los segmentos hacen el trabajo
+    if (_ruidoCapaModo !== 'ruido' && _ruidoHasArcos(entry)) {
+      ruidoAnimState.animLayer.setStyle({ opacity: 0 });
+    }
   }
   if (!ruidoAnimState.animDot) {
     ruidoAnimState.animDot = L.circleMarker(entry.coords[0], {
@@ -932,7 +963,17 @@ function ruidoAnimFrame(ts) {
   ruidoAnimState.progress = Math.min(1, ruidoAnimState.progress + speed * dt / 20);
 
   const shown = Math.max(2, Math.floor(ruidoAnimState.progress * (n - 1)) + 1);
-  ruidoAnimState.animLayer.setLatLngs(coords.slice(0, shown));
+
+  // Trazar recorrido: en modos de arco con coord_arcos → segmentos coloreados
+  // En modo ruido (o sin datos) → polilínea uniforme como antes
+  if (_ruidoCapaModo !== 'ruido' && _ruidoHasArcos(entry)) {
+    ruidoAnimState.animLayer.setLatLngs([]);   // mantener invisible
+    _ruidoUpdateAnimSegments(entry, shown);
+  } else {
+    _ruidoClearAnimSegs();
+    ruidoAnimState.animLayer.setLatLngs(coords.slice(0, shown));
+  }
+
   ruidoAnimState.animDot.setLatLng(coords[shown - 1]);
 
   const pct = (ruidoAnimState.progress * 100).toFixed(0);
@@ -961,10 +1002,16 @@ function ruidoAnimReset() {
   if (ruidoAnimState.animLayer && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animLayer); ruidoAnimState.animLayer = null; }
   if (ruidoAnimState.animDot   && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animDot);   ruidoAnimState.animDot   = null; }
 
-  // Restaurar línea estática de la ruta
+  _ruidoClearAnimSegs();
+
+  // Restaurar ruta estática
   if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoMap) {
     const entry = gpsLayers[ruidoAnimState.targetId];
-    _ruidoRouteLayer = L.polyline(entry.coords, { color: entry.color, weight: 3, opacity: 0.5 }).addTo(_ruidoMap);
+    if (_ruidoCapaModo !== 'ruido' && _ruidoHasArcos(entry)) {
+      _ruidoPaintRouteByArcos(entry);
+    } else {
+      _ruidoRouteLayer = L.polyline(entry.coords, { color: entry.color, weight: 3, opacity: 0.5 }).addTo(_ruidoMap);
+    }
   }
 
   if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
