@@ -586,6 +586,45 @@
 
   <div id="cmp-notif-tab" class="srch-notif" style="display:none"></div>
 
+  <!-- ── KPI VELOCÍMETROS — grillas 2×2 Empresa A vs Empresa B ── -->
+  <div id="cmp-kpi-section" style="display:none;margin-top:16px">
+    <div style="display:flex;gap:16px;align-items:flex-start">
+
+      <!-- Empresa A -->
+      <div style="flex:1;min-width:0">
+        <div id="cmp-kpi-head-a"
+             style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.1em;
+                    text-transform:uppercase;color:var(--accent);margin-bottom:8px">
+          Empresa A
+        </div>
+        <div id="cmp-kpi-grid-a"
+             style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        </div>
+      </div>
+
+      <!-- Empresa B -->
+      <div style="flex:1;min-width:0">
+        <div id="cmp-kpi-head-b"
+             style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.1em;
+                    text-transform:uppercase;color:var(--alt);margin-bottom:8px">
+          Empresa B
+        </div>
+        <div id="cmp-kpi-grid-b"
+             style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        </div>
+      </div>
+
+    </div>
+    <div id="cmp-kpi-note"
+         style="font-family:'Syne Mono',monospace;font-size:9px;color:var(--muted);
+                margin-top:10px;line-height:1.5">
+      Aguja = valor actual · línea punteada = referencia contrafactual · más alto es peor
+    </div>
+    <div id="cmp-kpi-status"
+         style="font-family:'Syne Mono',monospace;font-size:9px;color:var(--muted);
+                margin-top:4px"></div>
+  </div>
+
   <!-- Mapa + panel de resultados -->
   <div id="cmp-map-empty" class="gps-map-empty" style="margin-top:16px">
     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M2 8h12M9 4l4 4-4 4M7 12l-4-4 4-4" stroke-width="1.2"/></svg>

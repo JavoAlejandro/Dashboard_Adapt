@@ -185,6 +185,8 @@ function onCmpEmpChange() {
   const b = document.getElementById('cmp-emp-b').value;
   const btn = document.getElementById('cmp-emp-go-btn');
   if (btn) btn.style.display = (a && b && a !== b) ? 'inline-flex' : 'none';
+  // Actualizar KPIs en cuanto cambia cualquier selección
+  _kpiUpdateGrids();
 }
 
 // ── Map helpers ───────────────────────────────────────────────────────────
@@ -340,6 +342,9 @@ function runComparativaEmpresas() {
   const hint = document.getElementById('cmp-tab-hint');
   if (hint) hint.textContent =
     idsA.length + ' camiones día (rutas) de ' + empA + '  vs  ' + idsB.length + ' camiones día (rutas) de ' + empB;
+
+  // Actualizar grillas de KPIs
+  _kpiUpdateGrids();
 }
 
 // ── Empresa metrics calculation ───────────────────────────────────────────
@@ -888,3 +893,244 @@ function renderComparePanel(idA, idB) {
     { label: _fmtCamionLabel(gpsLayers[idB].feature.properties), vals: _avgStatsForIds([idB]), color: EMP_B }
   );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// KPI VELOCÍMETROS — Empresa A vs Empresa B (sub-panel Global · Ruido)
+//
+// Datos desde R2:
+//   ruido/dashboard_kpis_empresa.csv    → una fila por account_id, valores planos
+//   ruido/dashboard_kpis_referencia.csv → percentiles (p10…p90) por KPI
+//
+// Escala: por percentiles (p10–p90), mediana al centro. Más alto = peor.
+// Dos lecturas por KPI: *_actual (aguja larga) y *_ref (marca punteada corta).
+// ══════════════════════════════════════════════════════════════════════════════
+
+const KPI_LIST = [
+  { key: 'AMNI',     label: 'AMNI',     desc: 'Ruido marginal medio' },
+  { key: 'SSR',      label: 'SSR',      desc: 'Nivel de servicio sonoro' },
+  { key: 'PWMNE',    label: 'PWMNE',    desc: 'Impacto ponderado' },
+  { key: 'VP_PWMNE', label: 'VP-PWMNE', desc: 'Impacto en vulnerables' },
+];
+
+// Cache de datos cargados desde R2
+let _kpiEmpData = null;   // Map<account_id_str, row>
+let _kpiRefData = null;   // Map<kpi_key, {p10,p25,p50,p75,p90}>
+let _kpiLoading = false;
+
+// ── Carga desde R2 ────────────────────────────────────────────────────────────
+async function _kpiEnsureLoaded() {
+  if (_kpiEmpData && _kpiRefData) return true;
+  if (_kpiLoading) return false;
+  _kpiLoading = true;
+
+  const status = document.getElementById('cmp-kpi-status');
+  if (status) status.textContent = '⏳ Cargando KPIs…';
+
+  try {
+    const [empRes, refRes] = await Promise.all([
+      r2Fetch('ruido/dashboard_kpis_empresa.csv'),
+      r2Fetch('ruido/dashboard_kpis_referencia.csv'),
+    ]);
+    const [empText, refText] = await Promise.all([empRes.text(), refRes.text()]);
+
+    await Promise.all([
+      new Promise(res => Papa.parse(empText, {
+        header: true, dynamicTyping: true, skipEmptyLines: true,
+        complete({ data }) {
+          _kpiEmpData = new Map();
+          data.forEach(r => {
+            const aid = String(r.account_id ?? '').trim();
+            if (aid) _kpiEmpData.set(aid, r);
+          });
+          res();
+        },
+      })),
+      new Promise(res => Papa.parse(refText, {
+        header: true, dynamicTyping: true, skipEmptyLines: true,
+        complete({ data }) {
+          _kpiRefData = new Map();
+          data.forEach(r => {
+            const kpi = String(r.kpi ?? r.KPI ?? '').trim();
+            if (!kpi) return;
+            _kpiRefData.set(kpi, {
+              p10: +r.actual_p10   || +r.p10  || 0,
+              p25: +r.actual_p25   || +r.p25  || 0,
+              p50: +r.actual_p50_median || +r.p50_median || +r.p50 || 0,
+              p75: +r.actual_p75   || +r.p75  || 0,
+              p90: +r.actual_p90   || +r.p90  || 0,
+            });
+          });
+          res();
+        },
+      })),
+    ]);
+
+    _kpiLoading = false;
+    if (status) status.textContent = `✓ ${_kpiEmpData.size} empresas · ${_kpiRefData.size} KPIs cargados`;
+    return true;
+  } catch (err) {
+    _kpiLoading = false;
+    if (status) status.textContent = `✗ Error cargando KPIs: ${err.message}`;
+    console.error('[KPI]', err);
+    return false;
+  }
+}
+
+// ── Convertir valor a ángulo de aguja (-90° … +90°) ─────────────────────────
+// Escala por percentiles: p50 → 0° (centro), p25 → -90°, p75 → +90°.
+// Valores fuera del rango se clampan.
+function _kpiAngulo(valor, ref) {
+  if (valor == null || isNaN(valor) || !ref) return 0;
+  const { p25, p50, p75 } = ref;
+  if (valor <= p25) return -90;
+  if (valor >= p75) return  90;
+  if (valor <= p50) return -90 + ((valor - p25) / Math.max(p50 - p25, 1e-9)) * 90;
+  return ((valor - p50) / Math.max(p75 - p50, 1e-9)) * 90;
+}
+
+function _kpiFmt(v) {
+  if (v == null || isNaN(v)) return '—';
+  const a = Math.abs(v);
+  if (a >= 10000) return v.toLocaleString('es-CL', { maximumFractionDigits: 0 });
+  if (a >= 100)   return v.toFixed(1);
+  if (a >= 10)    return v.toFixed(2);
+  return v.toFixed(3);
+}
+
+// ── SVG de un velocímetro individual ─────────────────────────────────────────
+// Aguja larga = *_actual. Marca corta punteada = *_ref.
+function _kpiSvgGauge(kpiKey, row, ref, accentColor) {
+  const actual = row ? +row[kpiKey + '_actual'] : NaN;
+  const refVal = row ? +row[kpiKey + '_ref']    : NaN;
+  const pct    = row ? row[kpiKey + '_actual_pct'] : null;
+  const delta  = row ? +row[kpiKey + '_delta']  : NaN;
+
+  const angActual = _kpiAngulo(actual, ref);
+  const angRef    = _kpiAngulo(refVal, ref);
+
+  // Coordenadas del velocímetro
+  const cx = 70, cy = 60, r = 46;
+  const N = 48;
+  const arcPts = [];
+  for (let i = 0; i <= N; i++) {
+    const a = Math.PI * (1 - i / N);
+    arcPts.push(`${(cx + r * Math.cos(a)).toFixed(1)} ${(cy - r * Math.sin(a)).toFixed(1)}`);
+  }
+  const arcD = 'M' + arcPts.join(' L');
+
+  // Posición de aguja actual
+  const aRad   = (angActual - 90) * Math.PI / 180;
+  const nx     = cx + (r - 6) * Math.sin(aRad);
+  const ny     = cy - (r - 6) * Math.cos(aRad);
+
+  // Posición de marca ref
+  const aRefRad = (angRef - 90) * Math.PI / 180;
+  const rx1    = cx + (r - 12) * Math.sin(aRefRad);
+  const ry1    = cy - (r - 12) * Math.cos(aRefRad);
+  const rx2    = cx + (r + 2)  * Math.sin(aRefRad);
+  const ry2    = cy - (r + 2)  * Math.cos(aRefRad);
+
+  const deltaColor = (!isNaN(delta) && delta > 0) ? '#E03131' : (!isNaN(delta) && delta < 0) ? '#2C9E5B' : '#79828D';
+  const deltaSign  = (!isNaN(delta) && delta > 0) ? '+' : '';
+  const pctStr     = pct != null ? `p${Math.round(pct)}` : '—';
+
+  return `
+<svg viewBox="0 0 140 72" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">
+  <defs>
+    <linearGradient id="kg_${kpiKey}_${accentColor.replace('#','')}" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0"   stop-color="#2C9E5B"/>
+      <stop offset="0.5" stop-color="#E8B53A"/>
+      <stop offset="1"   stop-color="#E03131"/>
+    </linearGradient>
+  </defs>
+  <!-- Arco de fondo -->
+  <path d="${arcD}" fill="none" stroke="#E2E6EB" stroke-width="10" stroke-linecap="round"/>
+  <!-- Arco coloreado (gradiente) -->
+  <path d="${arcD}" fill="none" stroke="url(#kg_${kpiKey}_${accentColor.replace('#','')})" stroke-width="10" stroke-linecap="round"/>
+  <!-- Marca de mediana (centro) -->
+  <line x1="${cx}" y1="${cy - r - 2}" x2="${cx}" y2="${cy - r + 8}"
+        stroke="#79828D" stroke-width="1.5"/>
+  <!-- Marca ref (punteada) -->
+  ${!isNaN(refVal) ? `<line x1="${rx1.toFixed(1)}" y1="${ry1.toFixed(1)}"
+        x2="${rx2.toFixed(1)}" y2="${ry2.toFixed(1)}"
+        stroke="${accentColor}" stroke-width="1.8" stroke-dasharray="2 1.5" opacity="0.7"/>` : ''}
+  <!-- Aguja actual -->
+  ${!isNaN(actual) ? `<line x1="${cx}" y1="${cy}"
+        x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}"
+        stroke="#1E2530" stroke-width="2.2" stroke-linecap="round"/>` : ''}
+  <circle cx="${cx}" cy="${cy}" r="4" fill="#1E2530"/>
+</svg>`;
+}
+
+// ── Renderizar una grilla 2×2 para una empresa ────────────────────────────────
+function _kpiRenderGrid(containerId, accountId, accentColor) {
+  const grid = document.getElementById(containerId);
+  if (!grid) return;
+
+  const row = _kpiEmpData ? _kpiEmpData.get(String(accountId)) : null;
+
+  grid.innerHTML = '';
+  KPI_LIST.forEach(({ key, label, desc }) => {
+    const ref   = _kpiRefData ? _kpiRefData.get(key) : null;
+    const actual = row ? +row[key + '_actual'] : NaN;
+    const refVal = row ? +row[key + '_ref']    : NaN;
+    const pct    = row ? row[key + '_actual_pct'] : null;
+    const delta  = row ? +row[key + '_delta']  : NaN;
+
+    const deltaColor = (!isNaN(delta) && delta > 0) ? '#E03131' : (!isNaN(delta) && delta < 0) ? '#2C9E5B' : '#79828D';
+    const deltaSign  = (!isNaN(delta) && delta > 0) ? '+' : '';
+    const pctStr     = pct != null ? `p${Math.round(pct)}` : '—';
+
+    const card = document.createElement('div');
+    card.style.cssText = `
+      background:#FAFBFC;border:1px solid #E2E6EB;border-radius:9px;
+      padding:7px 6px 8px;text-align:center;
+    `;
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;
+                  padding:0 2px 3px;margin-bottom:2px">
+        <span style="font-family:'Syne',sans-serif;font-size:10.5px;font-weight:700;
+                     color:#1E2530">${label}</span>
+        <span style="font-family:'Syne Mono',monospace;font-size:8px;color:#79828D">${pctStr}</span>
+      </div>
+      ${_kpiSvgGauge(key, row, ref, accentColor)}
+      <div style="font-family:'Syne',sans-serif;font-size:12px;font-weight:800;
+                  color:#1E2530;margin-top:2px">${_kpiFmt(actual)}</div>
+      <div style="display:flex;justify-content:space-between;
+                  font-family:'Syne Mono',monospace;font-size:8px;
+                  color:#79828D;margin-top:3px;padding:0 2px">
+        <span>ref ${_kpiFmt(refVal)}</span>
+        <span style="color:${deltaColor}">Δ ${deltaSign}${_kpiFmt(delta)}</span>
+      </div>
+      <div style="font-family:'Syne Mono',monospace;font-size:8px;color:#9aa2ac;
+                  margin-top:2px">${desc}</div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+// ── Actualizar las dos grillas cuando cambia la selección de empresas ─────────
+async function _kpiUpdateGrids() {
+  const empA = document.getElementById('cmp-emp-a')?.value;
+  const empB = document.getElementById('cmp-emp-b')?.value;
+
+  const section = document.getElementById('cmp-kpi-section');
+  if (!section) return;
+
+  if (!empA && !empB) { section.style.display = 'none'; return; }
+
+  section.style.display = 'block';
+
+  // Actualizar cabeceras con el account_id seleccionado
+  const headA = document.getElementById('cmp-kpi-head-a');
+  const headB = document.getElementById('cmp-kpi-head-b');
+  if (headA) headA.textContent = empA ? `Empresa ${empA}` : 'Empresa A';
+  if (headB) headB.textContent = empB ? `Empresa ${empB}` : 'Empresa B';
+
+  const ok = await _kpiEnsureLoaded();
+  if (!ok) return;
+
+  if (empA) _kpiRenderGrid('cmp-kpi-grid-a', empA, 'var(--accent)');
+  if (empB) _kpiRenderGrid('cmp-kpi-grid-b', empB, 'var(--alt)');
+}
+
