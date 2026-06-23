@@ -202,7 +202,6 @@ function ruidoSyncRoute(busId) {
   if (!entry) {
     document.getElementById('map-ruido-empty').style.display = 'flex';
     document.getElementById('map-ruido-wrap').style.display  = 'none';
-    document.getElementById('ruido-side-stats').style.display = 'none';
     return;
   }
 
@@ -221,19 +220,15 @@ function ruidoSyncRoute(busId) {
   const dia = p.dia ?? '';
   if (note) note.textContent = `Camión ${oid} · Día ${dia} · ${entry.coords.length} puntos`;
 
-  // Precalcular hexágonos dentro del radio de la ruta (corredor de ruido relevante)
+  // Renderizar ambos paneles si los datos ya están cargados
   if (_ruidoLoaded) {
-    // Renderizar panel inmediatamente (sin ventana como fallback)
-    _ruidoRenderStatsPanel(entry);
-    // Luego calcular ventana y re-renderizar con valores precisos por tramo horario
     _ruidoComputarVentana(entry);
     _ruidoRenderStatsPanel(entry);
-  } else {
-    document.getElementById('ruido-side-stats').style.display = 'none';
+    _ruidoPaintForPoint(entry, 0);
   }
-
-  // Mostrar el hexágono de la hora inicial inmediatamente (frame 0)
-  if (_ruidoLoaded) _ruidoPaintForPoint(entry, 0);
+  if (_camionLoaded) {
+    _ruidoRenderVehiculoPanel(entry);
+  }
 }
 
 let _ruidoRouteLayer = null;
@@ -941,19 +936,23 @@ let _ruidoInnerTab = 'vehiculo';   // pestaña interna activa
 function ruidoSwitchInnerTab(name, btn) {
   _ruidoInnerTab = name;
 
-  // Estilos de pestañas
+  // Actualizar estilos de botones
   const btnV = document.getElementById('ruido-tab-vehiculo-btn');
   const btnI = document.getElementById('ruido-tab-impacto-btn');
-  const activeStyle   = 'border-bottom:2px solid var(--accent);color:var(--ink);background:var(--surface)';
-  const inactiveStyle = 'border-bottom:2px solid transparent;color:var(--muted);background:var(--surface)';
-  if (btnV) btnV.style.cssText = btnV.style.cssText.replace(/border-bottom:[^;]+/, '').replace(/color:[^;]+/, '').replace(/background:[^;]+/, '') + (name === 'vehiculo' ? activeStyle : inactiveStyle);
-  if (btnI) btnI.style.cssText = btnI.style.cssText.replace(/border-bottom:[^;]+/, '').replace(/color:[^;]+/, '').replace(/background:[^;]+/, '') + (name === 'impacto'  ? activeStyle : inactiveStyle);
+  if (btnV) {
+    btnV.style.borderBottom = name === 'vehiculo' ? '2px solid var(--accent)' : '2px solid transparent';
+    btnV.style.color        = name === 'vehiculo' ? 'var(--ink)' : 'var(--muted)';
+  }
+  if (btnI) {
+    btnI.style.borderBottom = name === 'impacto' ? '2px solid var(--accent)' : '2px solid transparent';
+    btnI.style.color        = name === 'impacto' ? 'var(--ink)' : 'var(--muted)';
+  }
 
   // Solo alternar contenido del panel izquierdo — el mapa NO se toca
   const pV = document.getElementById('ruido-inner-vehiculo');
   const pI = document.getElementById('ruido-inner-impacto');
-  if (pV) pV.style.display = name === 'vehiculo' ? 'flex' : 'none';
-  if (pI) pI.style.display = name === 'impacto'  ? 'flex' : 'none';
+  if (pV) pV.style.display = name === 'vehiculo' ? 'block' : 'none';
+  if (pI) pI.style.display = name === 'impacto'  ? 'block' : 'none';
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1178,7 +1177,13 @@ function _ruidoRenderVehiculoPanel(entry) {
 // ── HOOK: cuando se carga _camionDiagData, re-renderizar si hay ruta activa ──
 function _ruidoOnDiagDataReady() {
   const finalId = ruidoAnimState.targetId;
-  if (finalId && gpsLayers[finalId]) {
-    _ruidoRenderVehiculoPanel(gpsLayers[finalId]);
+  if (!finalId || !gpsLayers[finalId]) return;
+  const entry = gpsLayers[finalId];
+  _ruidoRenderVehiculoPanel(entry);
+  // Re-renderizar Impacto también si los datos de hexágonos ya cargaron
+  if (_ruidoLoaded) {
+    _ruidoComputarVentana(entry);
+    _ruidoRenderStatsPanel(entry);
+    _ruidoPaintForPoint(entry, 0);
   }
 }

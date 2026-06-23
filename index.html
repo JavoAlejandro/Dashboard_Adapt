@@ -386,43 +386,55 @@
   <div class="gps-main-row">
 
     <!-- ── PANEL IZQUIERDO ──────────────────────────────────────────────── -->
-    <div class="gps-side-stats" id="ruido-side-panel"
-         style="flex-direction:column;padding:0;overflow:hidden;gap:0">
+    <div id="ruido-side-panel" style="
+      width:33%;flex-shrink:0;
+      background:var(--surface);border:1px solid var(--border);border-radius:4px;
+      display:flex;flex-direction:column;overflow:hidden;
+      min-height:400px;max-height:600px">
 
       <!-- Pestañas internas -->
-      <div style="display:flex;border-bottom:1px solid var(--border)">
+      <div style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0">
         <button id="ruido-tab-vehiculo-btn"
                 onclick="ruidoSwitchInnerTab('vehiculo',this)"
-                style="flex:1;font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;
-                       padding:8px 6px;border:none;border-bottom:2px solid var(--accent);background:var(--surface);
-                       color:var(--ink);cursor:pointer">
+                style="flex:1;font-family:'Syne Mono',monospace;font-size:9px;
+                       letter-spacing:0.08em;text-transform:uppercase;
+                       padding:9px 6px;border:none;cursor:pointer;
+                       border-bottom:2px solid var(--accent);
+                       background:var(--surface);color:var(--ink)">
           Vehículo
         </button>
         <button id="ruido-tab-impacto-btn"
                 onclick="ruidoSwitchInnerTab('impacto',this)"
-                style="flex:1;font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;
-                       padding:8px 6px;border:none;border-bottom:2px solid transparent;background:var(--surface);
-                       color:var(--muted);cursor:pointer">
+                style="flex:1;font-family:'Syne Mono',monospace;font-size:9px;
+                       letter-spacing:0.08em;text-transform:uppercase;
+                       padding:9px 6px;border:none;cursor:pointer;
+                       border-bottom:2px solid transparent;
+                       background:var(--surface);color:var(--muted)">
           Impacto Poblacional
         </button>
       </div>
 
-      <!-- Contenido: Vehículo -->
-      <div id="ruido-inner-vehiculo" style="display:flex;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:0">
-        <div id="ruido-vehiculo-stats"></div>
+      <!-- Contenido scrollable -->
+      <div style="flex:1;overflow-y:auto;min-height:0">
+
+        <!-- Panel Vehículo -->
+        <div id="ruido-inner-vehiculo" style="display:block;padding:16px 14px">
+          <div id="ruido-vehiculo-stats"></div>
+        </div>
+
+        <!-- Panel Impacto Poblacional -->
+        <div id="ruido-inner-impacto" style="display:none;padding:16px 14px">
+          <div id="ruido-side-stats"></div>
+        </div>
+
       </div>
 
-      <!-- Contenido: Impacto Poblacional -->
-      <div id="ruido-inner-impacto" style="display:none;flex-direction:column;overflow-y:auto;padding:14px 16px;gap:0">
-        <div id="ruido-side-stats"></div>
-      </div>
-
-      <!-- Estado de carga -->
-      <div style="padding:8px 14px;border-top:1px solid var(--border);background:var(--bg)">
-        <span class="gps-status" id="ruido-status" style="font-size:9px">
+      <!-- Barra de estado inferior -->
+      <div style="flex-shrink:0;padding:6px 12px;border-top:1px solid var(--border);background:var(--bg)">
+        <span class="gps-status" id="ruido-status" style="font-size:9px;color:var(--muted)">
           Selecciona un camión en Exposición
         </span>
-        <span class="gps-status" id="ruido-window-badge" style="display:none;color:var(--ink2);font-size:9px"></span>
+        <span id="ruido-window-badge" style="display:none;font-size:9px;color:var(--ink2);font-family:'Syne Mono',monospace"></span>
       </div>
     </div>
 
