@@ -263,7 +263,6 @@ function setTotals(vals, horas, tiempoDetencion, tiempoMov) {
     const subEl = document.getElementById('bsp-total-sub');
     if (subEl) {
       const hayDetencion = tiempoDetencion != null && tiempoDetencion > 0.01;
-      // Tiempo en movimiento: siempre visible si hay horas de operación
       const movStr = tiempoMov != null
         ? `<span style="color:#4af0a0;font-weight:700">${fmtH(tiempoMov)}h mov.</span>`
         : '';
@@ -339,7 +338,7 @@ function showGroupStats() {
 
   if (rows.length === 0) {
     sidePanel.style.display  = 'none';
-    chartPanel.style.display = 'none';
+    if (chartPanel) chartPanel.style.display = 'none';
     return;
   }
 
@@ -422,30 +421,33 @@ function showGroupStats() {
   });
 
   // Bar chart
-  const ctx = document.getElementById('chart-bus-stats').getContext('2d');
-  if (chartBusStats) chartBusStats.destroy();
-  chartBusStats = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: BSP_SEG_LABELS,
-      datasets: [{ data: vals, backgroundColor: BSP_COLORS, borderRadius: 3, borderSkipped: false }]
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(2)} personas (promedio)` } }
+  const _chartCanvas = document.getElementById('chart-bus-stats');
+  if (_chartCanvas) {
+    const ctx = _chartCanvas.getContext('2d');
+    if (chartBusStats) chartBusStats.destroy();
+    chartBusStats = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: BSP_SEG_LABELS,
+        datasets: [{ data: vals, backgroundColor: BSP_COLORS, borderRadius: 3, borderSkipped: false }]
       },
-      scales: {
-        x: { grid: { display: false }, ticks: { font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' } },
-        y: { grid: { color: '#ece8e0' }, ticks: { font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' },
-             title: { display: true, text: 'Personas (promedio)', font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' } }
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(2)} personas (promedio)` } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' } },
+          y: { grid: { color: '#ece8e0' }, ticks: { font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' },
+               title: { display: true, text: 'Personas (promedio)', font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' } }
+        }
       }
-    }
-  });
+    });
+  }
 
   sidePanel.style.display  = 'flex';
-  chartPanel.style.display = 'block';
+  if (chartPanel) chartPanel.style.display = 'block';
   setTimeout(() => { if (gpsMap) gpsMap.invalidateSize(); }, 50);
 }
 
@@ -454,7 +456,7 @@ function showBusStats(busId, mesOverride) {
   const chartPanel = document.getElementById('bus-stats-panel');
   if (!busId || busId === 'all') {
     sidePanel.style.display  = 'none';
-    chartPanel.style.display = 'none';
+    if (chartPanel) chartPanel.style.display = 'none';
     return;
   }
 
@@ -598,30 +600,33 @@ function showBusStats(busId, mesOverride) {
   });
 
   // Bar chart (full width below)
-  const ctx = document.getElementById('chart-bus-stats').getContext('2d');
-  if (chartBusStats) chartBusStats.destroy();
-  chartBusStats = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: BSP_SEG_LABELS,
-      datasets: [{ data: vals, backgroundColor: BSP_COLORS, borderRadius: 3, borderSkipped: false }]
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(2)} personas` } }
+  const _chartCanvas2 = document.getElementById('chart-bus-stats');
+  if (_chartCanvas2) {
+    const ctx = _chartCanvas2.getContext('2d');
+    if (chartBusStats) chartBusStats.destroy();
+    chartBusStats = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: BSP_SEG_LABELS,
+        datasets: [{ data: vals, backgroundColor: BSP_COLORS, borderRadius: 3, borderSkipped: false }]
       },
-      scales: {
-        x: { grid: { display: false }, ticks: { font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' } },
-        y: { grid: { color: '#ece8e0' }, ticks: { font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' },
-             title: { display: true, text: 'Personas', font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' } }
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(2)} personas` } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' } },
+          y: { grid: { color: '#ece8e0' }, ticks: { font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' },
+               title: { display: true, text: 'Personas', font: { family:"'Syne Mono'", size: 9 }, color: '#8a867e' } }
+        }
       }
-    }
-  });
+    });
+  }
 
   sidePanel.style.display  = 'flex';
-  chartPanel.style.display = 'block';
+  if (chartPanel) chartPanel.style.display = 'block';
 
   // Vías recorridas
   renderVias(entry ? entry.feature.properties.vias_recorridas : null);
@@ -1666,7 +1671,7 @@ function clearSearch() {
   animState.targetId = null;
   document.getElementById('anim-note').textContent = 'Selecciona un camión para animar';
   document.getElementById('gps-side-stats').style.display  = 'none';
-  document.getElementById('bus-stats-panel').style.display = 'none';
+  { const _el = document.getElementById('bus-stats-panel'); if (_el) _el.style.display = 'none'; }
   renderVias(null);
   clearStays();
   fitAllBuses();
@@ -1712,7 +1717,7 @@ function enterCompareMode() {
   document.getElementById('srch-label-a').textContent  = 'Camión día A';
   // Hide single stats panels
   document.getElementById('gps-side-stats').style.display  = 'none';
-  document.getElementById('bus-stats-panel').style.display = 'none';
+  { const _el = document.getElementById('bus-stats-panel'); if (_el) _el.style.display = 'none'; }
 }
 
 function exitCompareMode() {
@@ -2022,7 +2027,7 @@ function applyFilters() {
     showGroupStats();
   } else if (!anyActive) {
     document.getElementById('gps-side-stats').style.display  = 'none';
-    document.getElementById('bus-stats-panel').style.display = 'none';
+    { const _el = document.getElementById('bus-stats-panel'); if (_el) _el.style.display = 'none'; }
   }
   // Update dynamic stat cells to reflect current visible set
   updateStatsCells();
