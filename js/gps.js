@@ -246,7 +246,7 @@ const BSP_SEG_KEYS   = ['gse_ab_personas','gse_c1a_personas','gse_c2_personas','
 const BSP_KEYS_GSE  = BSP_SEG_KEYS.slice(0, 6);   // indices 0–5
 const BSP_KEYS_EDAD = BSP_SEG_KEYS.slice(6);       // indices 6–11
 
-function setTotals(vals, horas, tiempoDetencion, tiempoMov) {
+function setTotals(vals, horas, tiempoMuerto, tiempoMov) {
   if (!vals) {
     document.getElementById('bsp-totals').style.display = 'none';
     return;
@@ -262,15 +262,16 @@ function setTotals(vals, horas, tiempoDetencion, tiempoMov) {
       `<span class="bsp-per-hora" style="font-size:22px;padding:6px 14px">${fmtH(perHoraEdad)} p/h</span>`;
     const subEl = document.getElementById('bsp-total-sub');
     if (subEl) {
-      const hayDetencion = tiempoDetencion != null && tiempoDetencion > 0.01;
+      const hayMuertos = tiempoMuerto != null && tiempoMuerto > 0.01;
+      // Tiempo en movimiento: siempre visible si hay horas de operación
       const movStr = tiempoMov != null
         ? `<span style="color:#4af0a0;font-weight:700">${fmtH(tiempoMov)}h mov.</span>`
         : '';
-      const detencionStr = hayDetencion
-        ? `<span style="color:#e8382a">${fmtH(tiempoDetencion)}h det.</span> · `
+      const muertosStr = hayMuertos
+        ? `<span style="color:#e8382a">${fmtH(tiempoMuerto)}h muertos</span> · `
         : '';
-      const tiempoLine = (detencionStr || movStr)
-        ? `<br>${detencionStr}${movStr}` : '';
+      const tiempoLine = (muertosStr || movStr)
+        ? `<br>${muertosStr}${movStr}` : '';
       subEl.innerHTML =
         `<span style="font-family:'Syne Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.08em;line-height:1.8">
           ${fmtV(totalEdad)} personas · ${fmtH(horas)}h operación${tiempoLine}
@@ -362,8 +363,8 @@ function showGroupStats() {
     ? horasDurations.reduce((a, b) => a + b, 0) / horasDurations.length
     : null;
 
-  // Tiempos de detención (stays) promedio entre rutas visibles
-  const detencionAvg = (() => {
+  // Tiempos muertos (stays) promedio entre rutas visibles
+  const muertosAvg = (() => {
     const vals2 = visibleIds.map(id => {
       const stays = gpsLayers[id] && gpsLayers[id].feature.properties.stays;
       if (!stays || !Array.isArray(stays)) return 0;
@@ -383,7 +384,7 @@ function showGroupStats() {
   document.getElementById('bsp-title').textContent = `Grupo${empLbl}${busLbl}${mesLbl}${diaLbl}`;
   document.getElementById('bsp-sub').textContent   =
     `PROMEDIO DE ${rows.length} BUS${rows.length > 1 ? 'ES' : ''} · ${visibleIds.length - rows.length > 0 ? `(${visibleIds.length - rows.length} sin datos CSV)` : 'TODOS CON DATOS'}`;
-  setTotals(vals, horasAvg, detencionAvg, horasAvg != null ? Math.max(0, horasAvg - detencionAvg) : null);
+  setTotals(vals, horasAvg, muertosAvg, horasAvg != null ? Math.max(0, horasAvg - muertosAvg) : null);
 
   // Side cards with GSE/edad separator
   const cards = document.getElementById('bsp-cards');
@@ -555,12 +556,12 @@ function showBusStats(busId, mesOverride) {
   const horas = (horaInicioOp != null && horaFinOp != null && horaFinOp >= horaInicioOp)
     ? horaFinOp - horaInicioOp : null;
 
-  // Tiempos de detención: suma de duración de stays (en horas)
+  // Tiempos muertos: suma de duración de stays (en horas)
   const staysArr      = Array.isArray(p.stays) ? p.stays : [];
-  const tiempoDetencion  = staysArr.reduce((s, st) => s + ((st.duration_minutes || 0) / 60), 0);
-  const tiempoMov     = horas != null ? Math.max(0, horas - tiempoDetencion) : null;
+  const tiempoMuerto  = staysArr.reduce((s, st) => s + ((st.duration_minutes || 0) / 60), 0);
+  const tiempoMov     = horas != null ? Math.max(0, horas - tiempoMuerto) : null;
 
-  setTotals(vals, horas, tiempoDetencion, tiempoMov);
+  setTotals(vals, horas, tiempoMuerto, tiempoMov);
 
   // Compact side cards — one row per segment with GSE/edad separator
   const cards = document.getElementById('bsp-cards');
