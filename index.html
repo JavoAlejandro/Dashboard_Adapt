@@ -450,6 +450,33 @@
       </div>
 
       <div class="map-gps-wrap" id="map-ruido-wrap" style="position:relative;display:none">
+        <!-- Toggle de capa de coloreado -->
+        <div style="position:absolute;top:8px;right:8px;z-index:500;
+                    display:flex;gap:4px;background:var(--surface);
+                    border:1px solid var(--border);border-radius:4px;padding:3px;
+                    font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.06em">
+          <button id="ruido-capa-ruido"
+                  onclick="ruidoSetCapaModo('ruido')"
+                  title="Nivel de ruido ambiente (dB)"
+                  style="padding:3px 8px;border:1px solid var(--ink);border-radius:3px;
+                         cursor:pointer;background:var(--ink);color:var(--bg)">
+            RUIDO
+          </button>
+          <button id="ruido-capa-regime"
+                  onclick="ruidoSetCapaModo('regime')"
+                  title="Régimen de tráfico (Sensitive / Transition / Saturated)"
+                  style="padding:3px 8px;border:1px solid var(--border);border-radius:3px;
+                         cursor:pointer;background:transparent;color:var(--muted)">
+            RÉGIMEN
+          </button>
+          <button id="ruido-capa-dldk"
+                  onclick="ruidoSetCapaModo('dldk')"
+                  title="Intensidad de externalidad (dLdk) — dónde aporta más ruido"
+                  style="padding:3px 8px;border:1px solid var(--border);border-radius:3px;
+                         cursor:pointer;background:transparent;color:var(--muted)">
+            dLdk
+          </button>
+        </div>
         <div class="via-indicator" id="ruido-hour-badge" style="display:none">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:13px;height:13px;flex-shrink:0">
             <circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/>

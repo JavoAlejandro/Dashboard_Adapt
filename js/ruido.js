@@ -413,7 +413,8 @@ async function _ruidoEnsureCamionLoaded() {
 
           _camionLoaded  = true;
           _camionLoading = false;
-          _ruidoOnDiagDataReady();   // re-renderizar panel Vehículo si hay ruta activa
+          _ruidoBuildArcHexIndex(rows);   // índice h3→{regime,dLdk} por (oid,hour)
+          _ruidoOnDiagDataReady();
           resolve(true);
         },
         error() { _camionLoading = false; resolve(false); },
@@ -650,6 +651,149 @@ function _ruidoCalcularEstadisticas(entry) {
 }
 
 
+// ══════════════════════════════════════════════════════════════════════════════
+// COLOREADO DE ARCOS — dos capas según README_2
+//
+// Modo 'regime': cada hexágono se colorea por el régimen de tráfico del camión
+//   al pasar por ese arco (Sensitive / Transition / Saturated).
+// Modo 'dldk':   gradiente divergente centrado en 0 sobre dLdk — azul = reduce
+//   ruido, gris = neutro, rojo = donde más aporta.
+//
+// Los hexágonos se obtienen de _camionDiagData (arc_id × hour → h3 via
+// _camionArcHexIndex), que ya está indexado al cargar camion_hora_rm.csv.
+// El coloreado reemplaza (no acumula) la capa de hexágonos ambiente por hora.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Modo activo: 'ruido' | 'regime' | 'dldk' ─────────────────────────────────
+let _ruidoCapaModo = 'ruido';   // default: nivel de ruido ambiente (comportamiento original)
+
+// ── Índice h3 → {regime, dLdk} por (oid, hour) ────────────────────────────────
+// Construido al parsear camion_hora_rm.csv. Permite lookup O(1) en cada frame.
+// Estructura: Map<oid, Map<hour, Map<h3_index, {regime, dLdk}>>>
+let _camionArcHexIndex = null;
+
+// Se llama desde _ruidoEnsureCamionLoaded después de parsear todas las filas
+function _ruidoBuildArcHexIndex(rows) {
+  _camionArcHexIndex = new Map();
+  rows.forEach(r => {
+    const oid   = String(r.owner_id ?? '');
+    const h3    = String(r.h3_index ?? '');
+    const hour  = Math.round(+r.hour);
+    const dLdk  = +r.dLdk  || 0;
+    const regime = String(r.regime ?? '');
+    if (!oid || !h3 || isNaN(hour)) return;
+    if (!_camionArcHexIndex.has(oid)) _camionArcHexIndex.set(oid, new Map());
+    const byHour = _camionArcHexIndex.get(oid);
+    if (!byHour.has(hour)) byHour.set(hour, new Map());
+    // Si el h3 aparece en varios arcos de la misma hora, tomar el dLdk de mayor |valor|
+    const prev = byHour.get(hour).get(h3);
+    if (!prev || Math.abs(dLdk) > Math.abs(prev.dLdk)) {
+      byHour.get(hour).set(h3, { regime, dLdk });
+    }
+  });
+}
+
+// ── Paleta régimen (según README_2) ──────────────────────────────────────────
+const REGIME_COLORS = {
+  sensitive:  '#2E9BE6',   // celeste  — free-flow, mayor ruido marginal
+  transition: '#F5A623',   // ámbar    — 87% de los tramos
+  saturated:  '#E53935',   // rojo     — congestión severa
+};
+function _ruidoRegimeColor(regime) {
+  const k = (regime || '').toLowerCase();
+  if (k.includes('sensitive') || k.includes('free'))  return REGIME_COLORS.sensitive;
+  if (k.includes('saturated') || k.includes('congest')) return REGIME_COLORS.saturated;
+  return REGIME_COLORS.transition;
+}
+
+// ── Gradiente divergente dLdk (README_2: ±p95 = ±1.71, recortado) ────────────
+const DLDK_DOMAIN = 1.71;   // ±p95 según README_2
+const DLDK_RAMP = [
+  { t: 0.00, r: 5,   g: 113, b: 176 },  // #0571B0 — azul (reduce ruido)
+  { t: 0.25, r: 146, g: 197, b: 222 },  // #92C5DE
+  { t: 0.50, r: 247, g: 247, b: 247 },  // #F7F7F7 — gris neutro
+  { t: 0.75, r: 244, g: 165, b: 130 },  // #F4A582
+  { t: 1.00, r: 202, g: 0,   b: 32  },  // #CA0020 — rojo (aporta más)
+];
+function _ruidoDldkColor(dLdk) {
+  const t = Math.max(0, Math.min(1, (dLdk + DLDK_DOMAIN) / (2 * DLDK_DOMAIN)));
+  let lo = DLDK_RAMP[0], hi = DLDK_RAMP[DLDK_RAMP.length - 1];
+  for (let i = 1; i < DLDK_RAMP.length; i++) {
+    if (t <= DLDK_RAMP[i].t) { lo = DLDK_RAMP[i-1]; hi = DLDK_RAMP[i]; break; }
+  }
+  const f = (t - lo.t) / Math.max(hi.t - lo.t, 1e-9);
+  const r = Math.round(lo.r + (hi.r - lo.r) * f);
+  const g = Math.round(lo.g + (hi.g - lo.g) * f);
+  const b = Math.round(lo.b + (hi.b - lo.b) * f);
+  return `rgba(${r},${g},${b},0.75)`;
+}
+
+// ── Pintar capa de arcos sobre el mapa para una hora dada ─────────────────────
+// Reemplaza completamente la capa _ruidoLayerGrp (la misma que usa el ruido
+// ambiente). El caller (_ruidoPaintHour) ya limpia la capa anterior.
+function _ruidoPaintArcos(hour) {
+  const targetId = ruidoAnimState.targetId;
+  if (!targetId || !gpsLayers[targetId]) return false;
+  if (!_camionArcHexIndex) return false;
+
+  const oid     = String(gpsLayers[targetId].feature.properties.owner_id ?? '');
+  const byHour  = _camionArcHexIndex.get(oid);
+  if (!byHour) return false;
+  const hexMap  = byHour.get(hour);
+  if (!hexMap || hexMap.size === 0) return false;
+
+  _ruidoLayerGrp = L.layerGroup();
+
+  hexMap.forEach(({ regime, dLdk }, hexId) => {
+    const latlngs = _ruidoH3ToLatLngs(hexId);
+    if (!latlngs) return;
+
+    let fill, stroke;
+    if (_ruidoCapaModo === 'regime') {
+      fill   = _ruidoRegimeColor(regime);
+      stroke = fill;
+    } else {
+      fill   = _ruidoDldkColor(dLdk);
+      stroke = fill;
+    }
+
+    L.polygon(latlngs, {
+      fillColor: fill, fillOpacity: 1,
+      color: stroke, weight: 0.5,
+      interactive: false, pane: 'ruidoPane',
+    }).addTo(_ruidoLayerGrp);
+  });
+
+  _ruidoLayerGrp.addTo(_ruidoMap);
+  _ruidoUpdateHourBadge(hour, hexMap.size);
+  return true;
+}
+
+// ── Cambiar modo de capa y repintar inmediatamente ────────────────────────────
+function ruidoSetCapaModo(modo) {
+  _ruidoCapaModo = modo;   // 'ruido' | 'regime' | 'dldk'
+
+  // Actualizar botones del toggle
+  ['ruido', 'regime', 'dldk'].forEach(m => {
+    const btn = document.getElementById(`ruido-capa-${m}`);
+    if (!btn) return;
+    btn.style.background   = m === modo ? 'var(--ink)' : 'transparent';
+    btn.style.color        = m === modo ? 'var(--bg)'  : 'var(--muted)';
+    btn.style.borderColor  = m === modo ? 'var(--ink)' : 'var(--border)';
+  });
+
+  // Forzar repintado de la hora actual
+  const prev = _ruidoCurrentHour;
+  _ruidoCurrentHour = null;
+  if (prev != null) _ruidoPaintHour(prev);
+  else {
+    const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
+    if (entry) _ruidoPaintForPoint(entry, 0);
+  }
+
+  _ruidoUpdateLegend();
+}
+
 // ─── EXTRAER HORA DESDE coord_timestamps (formato "HH:MM") ───────────────────
 function _ruidoHourAtIndex(entry, idx) {
   const ts = entry.feature.properties.coord_timestamps;
@@ -670,6 +814,14 @@ function _ruidoPaintHour(hour) {
   _ruidoCurrentHour = hour;
 
   if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
+
+  // Modos de arcos: delegar a _ruidoPaintArcos
+  if (_ruidoCapaModo === 'regime' || _ruidoCapaModo === 'dldk') {
+    if (_camionLoaded) _ruidoPaintArcos(hour);
+    return;
+  }
+
+  // Modo 'ruido': comportamiento original — hexágonos de nivel ambiente
   if (!_ruidoByHour || !_ruidoByHour.has(hour)) {
     _ruidoUpdateHourBadge(hour, 0);
     return;
@@ -854,10 +1006,35 @@ function _ruidoUpdateLegend() {
     document.getElementById('map-ruido')?.appendChild(leg);
   }
 
+  if (_ruidoCapaModo === 'regime') {
+    leg.innerHTML = `
+      <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px">Régimen de tráfico</div>
+      ${Object.entries({ Sensitive: REGIME_COLORS.sensitive, Transition: REGIME_COLORS.transition, Saturated: REGIME_COLORS.saturated })
+        .map(([label, color]) => `<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
+          <span style="width:10px;height:10px;border-radius:2px;background:${color};display:inline-block;flex-shrink:0"></span>
+          <span>${label}</span>
+        </div>`).join('')}`;
+    return;
+  }
+
+  if (_ruidoCapaModo === 'dldk') {
+    const stops = DLDK_RAMP.map(s => `rgb(${s.r},${s.g},${s.b}) ${(s.t*100).toFixed(0)}%`).join(',');
+    leg.innerHTML = `
+      <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">Intensidad dLdk</div>
+      <div style="height:8px;border-radius:2px;background:linear-gradient(to right,${stops});margin-bottom:4px"></div>
+      <div style="display:flex;justify-content:space-between">
+        <span>−${DLDK_DOMAIN}</span><span>0</span><span>+${DLDK_DOMAIN}</span>
+      </div>
+      <div style="margin-top:4px;font-size:8px;line-height:1.4">
+        azul = reduce · gris = neutro · rojo = aporta
+      </div>`;
+    return;
+  }
+
+  // Modo ruido (default)
   const gradStops = RUIDO_RAMP
     .map(s => `rgb(${s.r},${s.g},${s.b}) ${(s.t * 100).toFixed(0)}%`)
     .join(',');
-
   leg.innerHTML = `
     <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">
       Nivel de ruido
