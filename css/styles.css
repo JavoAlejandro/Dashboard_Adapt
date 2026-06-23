@@ -1060,7 +1060,31 @@ select.pal-sel {
 .sub-tab-panel { display: none; }
 .sub-tab-panel.active { display: block; }
 
-/* ── RUIDO: sub-pestañas internas (Vehículo / Impacto Poblacional) ────────── */
+/* ── KPI Velocímetros — estilos del mockup ── */
+.kpi-gauge-card {
+  background: #FAFBFC;
+  border: 1px solid var(--line, #E2E6EB);
+  border-radius: 9px;
+  padding: 7px 5px 8px;
+  text-align: center;
+}
+.kpi-gl {
+  font-family: var(--sans, -apple-system, sans-serif);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--ink, #1E2530);
+}
+.kpi-gv {
+  font-family: var(--sans, -apple-system, sans-serif);
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink, #1E2530);
+}
+.kpi-gp {
+  font-family: var(--mono, monospace);
+  font-size: 8px;
+  color: var(--muted, #79828D);
+}
 .ruido-inner-panel { display: block; }
 #ruido-inner-tabs {
   padding: 0 20px;

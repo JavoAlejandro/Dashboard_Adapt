@@ -976,18 +976,6 @@ async function _kpiEnsureLoaded() {
   }
 }
 
-// ── Convertir valor a ángulo de aguja (-90° … +90°) ─────────────────────────
-// Escala por percentiles: p50 → 0° (centro), p25 → -90°, p75 → +90°.
-// Valores fuera del rango se clampan.
-function _kpiAngulo(valor, ref) {
-  if (valor == null || isNaN(valor) || !ref) return 0;
-  const { p25, p50, p75 } = ref;
-  if (valor <= p25) return -90;
-  if (valor >= p75) return  90;
-  if (valor <= p50) return -90 + ((valor - p25) / Math.max(p50 - p25, 1e-9)) * 90;
-  return ((valor - p50) / Math.max(p75 - p50, 1e-9)) * 90;
-}
-
 function _kpiFmt(v) {
   if (v == null || isNaN(v)) return '—';
   const a = Math.abs(v);
@@ -997,114 +985,70 @@ function _kpiFmt(v) {
   return v.toFixed(3);
 }
 
-// ── SVG de un velocímetro individual ─────────────────────────────────────────
-// Aguja larga = *_actual. Marca corta punteada = *_ref.
-function _kpiSvgGauge(kpiKey, row, ref, accentColor) {
-  const actual = row ? +row[kpiKey + '_actual'] : NaN;
-  const refVal = row ? +row[kpiKey + '_ref']    : NaN;
-  const pct    = row ? row[kpiKey + '_actual_pct'] : null;
-  const delta  = row ? +row[kpiKey + '_delta']  : NaN;
-
-  const angActual = _kpiAngulo(actual, ref);
-  const angRef    = _kpiAngulo(refVal, ref);
-
-  // Coordenadas del velocímetro
-  const cx = 70, cy = 60, r = 46;
-  const N = 48;
-  const arcPts = [];
-  for (let i = 0; i <= N; i++) {
-    const a = Math.PI * (1 - i / N);
-    arcPts.push(`${(cx + r * Math.cos(a)).toFixed(1)} ${(cy - r * Math.sin(a)).toFixed(1)}`);
+// ── SVG de un velocímetro — fiel al mockup ────────────────────────────────────
+// viewBox 0 0 140 66, cx=70, cy=58, r=48, N=44 puntos en el arco.
+// Aguja desde el centro hasta el punto del arco según *_actual_pct.
+// Marca fija en la mediana (centro del arco, ángulo π/2).
+// Sin líneas punteadas. Exactamente igual que el mockup.
+function _kpiSvgGauge(idx, label, val, pct) {
+  const cx = 70, cy = 58, r = 48, N = 44;
+  const P = [];
+  for (let j = 0; j <= N; j++) {
+    const a = Math.PI * (1 - j / N);
+    P.push(`${(cx + r * Math.cos(a)).toFixed(1)} ${(cy - r * Math.sin(a)).toFixed(1)}`);
   }
-  const arcD = 'M' + arcPts.join(' L');
+  const arcD = 'M' + P.join(' L');
 
-  // Posición de aguja actual
-  const aRad   = (angActual - 90) * Math.PI / 180;
-  const nx     = cx + (r - 6) * Math.sin(aRad);
-  const ny     = cy - (r - 6) * Math.cos(aRad);
+  // Aguja: posición según percentil (0–100 → arco de izq a der)
+  const pctClamped = Math.max(0, Math.min(100, pct ?? 50));
+  const an = Math.PI * (1 - pctClamped / 100);
+  const nx = (cx + (r - 7) * Math.cos(an)).toFixed(1);
+  const ny = (cy - (r - 7) * Math.sin(an)).toFixed(1);
 
-  // Posición de marca ref
-  const aRefRad = (angRef - 90) * Math.PI / 180;
-  const rx1    = cx + (r - 12) * Math.sin(aRefRad);
-  const ry1    = cy - (r - 12) * Math.cos(aRefRad);
-  const rx2    = cx + (r + 2)  * Math.sin(aRefRad);
-  const ry2    = cy - (r + 2)  * Math.cos(aRefRad);
+  const gradId = `gg_${idx}`;
 
-  const deltaColor = (!isNaN(delta) && delta > 0) ? '#E03131' : (!isNaN(delta) && delta < 0) ? '#2C9E5B' : '#79828D';
-  const deltaSign  = (!isNaN(delta) && delta > 0) ? '+' : '';
-  const pctStr     = pct != null ? `p${Math.round(pct)}` : '—';
-
-  return `
-<svg viewBox="0 0 140 72" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">
+  return `<svg viewBox="0 0 140 66" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">
   <defs>
-    <linearGradient id="kg_${kpiKey}_${accentColor.replace('#','')}" x1="0" x2="1" y1="0" y2="0">
+    <linearGradient id="${gradId}" x1="0" x2="1" y1="0" y2="0">
       <stop offset="0"   stop-color="#2C9E5B"/>
-      <stop offset="0.5" stop-color="#E8B53A"/>
+      <stop offset=".5"  stop-color="#E8B53A"/>
       <stop offset="1"   stop-color="#E03131"/>
     </linearGradient>
   </defs>
-  <!-- Arco de fondo -->
-  <path d="${arcD}" fill="none" stroke="#E2E6EB" stroke-width="10" stroke-linecap="round"/>
-  <!-- Arco coloreado (gradiente) -->
-  <path d="${arcD}" fill="none" stroke="url(#kg_${kpiKey}_${accentColor.replace('#','')})" stroke-width="10" stroke-linecap="round"/>
-  <!-- Marca de mediana (centro) -->
-  <line x1="${cx}" y1="${cy - r - 2}" x2="${cx}" y2="${cy - r + 8}"
-        stroke="#79828D" stroke-width="1.5"/>
-  <!-- Marca ref (punteada) -->
-  ${!isNaN(refVal) ? `<line x1="${rx1.toFixed(1)}" y1="${ry1.toFixed(1)}"
-        x2="${rx2.toFixed(1)}" y2="${ry2.toFixed(1)}"
-        stroke="${accentColor}" stroke-width="1.8" stroke-dasharray="2 1.5" opacity="0.7"/>` : ''}
-  <!-- Aguja actual -->
-  ${!isNaN(actual) ? `<line x1="${cx}" y1="${cy}"
-        x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}"
-        stroke="#1E2530" stroke-width="2.2" stroke-linecap="round"/>` : ''}
+  <path d="${arcD}" fill="none" stroke="url(#${gradId})" stroke-width="9" stroke-linecap="round"/>
+  <line x1="${cx}" y1="${cy - r - 1}" x2="${cx}" y2="${cy - r + 7}" stroke="#1E2530" stroke-width="2"/>
+  <line x1="${cx}" y1="${cy}" x2="${nx}" y2="${ny}" stroke="#1E2530" stroke-width="2.4" stroke-linecap="round"/>
   <circle cx="${cx}" cy="${cy}" r="4" fill="#1E2530"/>
 </svg>`;
 }
 
 // ── Renderizar una grilla 2×2 para una empresa ────────────────────────────────
-function _kpiRenderGrid(containerId, accountId, accentColor) {
+function _kpiRenderGrid(containerId, accountId) {
   const grid = document.getElementById(containerId);
   if (!grid) return;
 
   const row = _kpiEmpData ? _kpiEmpData.get(String(accountId)) : null;
 
   grid.innerHTML = '';
-  KPI_LIST.forEach(({ key, label, desc }) => {
-    const ref   = _kpiRefData ? _kpiRefData.get(key) : null;
-    const actual = row ? +row[key + '_actual'] : NaN;
-    const refVal = row ? +row[key + '_ref']    : NaN;
-    const pct    = row ? row[key + '_actual_pct'] : null;
-    const delta  = row ? +row[key + '_delta']  : NaN;
+  KPI_LIST.forEach(({ key, label }, idx) => {
+    const actual = row ? +row[key + '_actual']     : NaN;
+    const pct    = row ?  row[key + '_actual_pct'] : null;
+    const refVal = row ? +row[key + '_ref']         : NaN;
+    const delta  = row ? +row[key + '_delta']       : NaN;
 
-    const deltaColor = (!isNaN(delta) && delta > 0) ? '#E03131' : (!isNaN(delta) && delta < 0) ? '#2C9E5B' : '#79828D';
+    const valStr = isNaN(actual) ? '—' : _kpiFmt(actual);
+    const pctStr = pct != null   ? `pct ${(+pct).toFixed(1)}` : '—';
+    const deltaColor = (!isNaN(delta) && delta > 0) ? '#E03131'
+                     : (!isNaN(delta) && delta < 0) ? '#2C9E5B' : '#79828D';
     const deltaSign  = (!isNaN(delta) && delta > 0) ? '+' : '';
-    const pctStr     = pct != null ? `p${Math.round(pct)}` : '—';
 
     const card = document.createElement('div');
-    card.style.cssText = `
-      background:#FAFBFC;border:1px solid #E2E6EB;border-radius:9px;
-      padding:7px 6px 8px;text-align:center;
-    `;
-    card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:baseline;
-                  padding:0 2px 3px;margin-bottom:2px">
-        <span style="font-family:'Syne',sans-serif;font-size:10.5px;font-weight:700;
-                     color:#1E2530">${label}</span>
-        <span style="font-family:'Syne Mono',monospace;font-size:8px;color:#79828D">${pctStr}</span>
-      </div>
-      ${_kpiSvgGauge(key, row, ref, accentColor)}
-      <div style="font-family:'Syne',sans-serif;font-size:12px;font-weight:800;
-                  color:#1E2530;margin-top:2px">${_kpiFmt(actual)}</div>
-      <div style="display:flex;justify-content:space-between;
-                  font-family:'Syne Mono',monospace;font-size:8px;
-                  color:#79828D;margin-top:3px;padding:0 2px">
-        <span>ref ${_kpiFmt(refVal)}</span>
-        <span style="color:${deltaColor}">Δ ${deltaSign}${_kpiFmt(delta)}</span>
-      </div>
-      <div style="font-family:'Syne Mono',monospace;font-size:8px;color:#9aa2ac;
-                  margin-top:2px">${desc}</div>
-    `;
+    card.className = 'kpi-gauge-card';
+    card.innerHTML =
+      _kpiSvgGauge(containerId + idx, label, actual, pct) +
+      `<div class="kpi-gl">${label}</div>
+       <div class="kpi-gv">${valStr}</div>
+       <div class="kpi-gp">${pctStr}</div>`;
     grid.appendChild(card);
   });
 }
@@ -1130,7 +1074,7 @@ async function _kpiUpdateGrids() {
   const ok = await _kpiEnsureLoaded();
   if (!ok) return;
 
-  if (empA) _kpiRenderGrid('cmp-kpi-grid-a', empA, 'var(--accent)');
-  if (empB) _kpiRenderGrid('cmp-kpi-grid-b', empB, 'var(--alt)');
+  if (empA) _kpiRenderGrid('cmp-kpi-grid-a', empA);
+  if (empB) _kpiRenderGrid('cmp-kpi-grid-b', empB);
 }
 
