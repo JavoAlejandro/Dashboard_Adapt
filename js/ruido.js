@@ -19,6 +19,7 @@ let _ruidoLoading   = false;
 let _ruidoLayerGrp  = null;    // L.layerGroup con los hexágonos de la hora actual
 let _ruidoMap       = null;    // instancia Leaflet propia del sub-tab Ruido
 let _ruidoCurrentHour = null;  // última hora pintada (evita redibujar si no cambió)
+let _ruidoLastAnimHour = null; // última hora revelada en animación (evita redraw por frame)
 
 // Estado de animación propio (independiente de animState en animation.js)
 let ruidoAnimState = {
@@ -302,28 +303,29 @@ function _ruidoClearCriticos(silent = false) {
 }
 
 // ── Obtener arcos de un vehículo hasta una hora dada (inclusive) ──────────────
-// Devuelve Map<arc_id, {regime, dLdk}> con los arcos acumulados hasta `upToHour`.
-// Un arc_id puede aparecer en varias horas — se conserva el primero encontrado
-// (el de menor hour), ya que todos son válidos incluyendo dLdk = 0 o null.
+// Devuelve Map<arc_id, {regime, dLdk}> con TODOS los arcos del owner hasta `upToHour`.
+// Sin ningún filtro por dLdk — todo arc_id presente en el CSV se dibuja.
+// Si un arc_id aparece en varias horas se toma el primero (menor hour);
+// si ese primero no tiene régimen y uno posterior sí, se actualiza el régimen.
 function _rutaArcosHasta(ownerId, upToHour) {
   const byHour = _rutaArcosData?.get(String(ownerId));
   if (!byHour) return null;
 
-  const acum = new Map();
-  // Iterar en orden de hora para que la primera aparición (menor hour) prevalezca
+  const acum  = new Map();
   const hours = [...byHour.keys()].sort((a, b) => a - b);
+
   for (const hour of hours) {
     if (upToHour !== undefined && hour > upToHour) continue;
     byHour.get(hour).forEach(({ arc_id, regime, dLdk }) => {
       if (!acum.has(arc_id)) {
-        // Primera vez que aparece este arco: registrar
         acum.set(arc_id, { regime, dLdk });
       } else if (!acum.get(arc_id).regime && regime) {
-        // Ya existe pero sin régimen: actualizar con el que sí tiene
-        acum.set(arc_id, { regime, dLdk });
+        // actualizar solo el régimen si el primer registro no lo tenía
+        acum.get(arc_id).regime = regime;
       }
     });
   }
+
   return acum.size > 0 ? acum : null;
 }
 
@@ -1129,6 +1131,7 @@ function ruidoAnimPlay() {
 
   ruidoAnimState.active = true;
   ruidoAnimState.lastTs = null;
+  _ruidoLastAnimHour    = null;   // forzar redraw de arcos desde la primera hora
   if (ruidoAnimState.progress >= 1) ruidoAnimState.progress = 0;
 
   document.getElementById('ruido-anim-icon-play').style.display  = 'none';
@@ -1181,17 +1184,19 @@ function ruidoAnimFrame(ts) {
   document.getElementById('ruido-anim-label').textContent = pct + '%';
 
   // Hora actual desde coord_timestamps
+  const currentHour = _ruidoHourAtIndex(entry, shown - 1);
   _ruidoPaintForPoint(entry, shown - 1);
 
-  // Revelar arcos de RedVial acumulados hasta la hora actual
-  const currentHour = _ruidoHourAtIndex(entry, shown - 1);
-  if (currentHour !== null) {
+  // Revelar arcos solo cuando cambia la hora — evitar redraw en cada frame
+  if (currentHour !== null && currentHour !== _ruidoLastAnimHour) {
+    _ruidoLastAnimHour = currentHour;
     const diag = _ruidoDiagnosticoVehiculo(entry);
     _ruidoActualizarArcosHora(entry, currentHour, diag?.criticos || []);
   }
 
   if (ruidoAnimState.progress >= 1) {
-    ruidoAnimState.active = false;
+    ruidoAnimState.active      = false;
+    _ruidoLastAnimHour         = null;
     document.getElementById('ruido-anim-icon-play').style.display  = '';
     document.getElementById('ruido-anim-icon-pause').style.display = 'none';
     document.getElementById('ruido-anim-note').textContent = '✓ Recorrido completo';
@@ -1213,6 +1218,7 @@ function ruidoAnimReset() {
 
   _ruidoClearAnimSegs();
   _ruidoClearCriticos();
+  _ruidoLastAnimHour = null;
 
   // Restaurar arcos de RedVial al resetear
   if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoMap) {
