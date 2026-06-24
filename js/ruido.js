@@ -291,31 +291,39 @@ async function _ruidoLoadRutaArcos() {
 }
 
 // ── Limpiar capa de arcos ──────────────────────────────────────────────────────
-function _ruidoClearCriticos() {
+let _rutaArcosToken = 0;   // incrementar al cambiar de ruta; las promesas viejas lo detectan
+
+function _ruidoClearCriticos(silent = false) {
   if (_criticosLayer && _ruidoMap) {
     _ruidoMap.removeLayer(_criticosLayer);
     _criticosLayer = null;
   }
+  if (!silent) _rutaArcosToken++;   // invalidar draws async pendientes (no en frames de animación)
 }
 
 // ── Obtener arcos de un vehículo hasta una hora dada (inclusive) ──────────────
 // Devuelve Map<arc_id, {regime, dLdk}> con los arcos acumulados hasta `upToHour`.
+// Un arc_id puede aparecer en varias horas — se conserva el primero encontrado
+// (el de menor hour), ya que todos son válidos incluyendo dLdk = 0 o null.
 function _rutaArcosHasta(ownerId, upToHour) {
   const byHour = _rutaArcosData?.get(String(ownerId));
   if (!byHour) return null;
 
-  // Acumular arcos de todas las horas ≤ upToHour
-  // Si un arc_id aparece en varias horas, conservar el de mayor |dLdk|
   const acum = new Map();
-  byHour.forEach((arcos, hour) => {
-    if (upToHour !== undefined && hour > upToHour) return;
-    arcos.forEach(({ arc_id, regime, dLdk }) => {
-      const prev = acum.get(arc_id);
-      if (!prev || Math.abs(dLdk ?? 0) > Math.abs(prev.dLdk ?? 0)) {
+  // Iterar en orden de hora para que la primera aparición (menor hour) prevalezca
+  const hours = [...byHour.keys()].sort((a, b) => a - b);
+  for (const hour of hours) {
+    if (upToHour !== undefined && hour > upToHour) continue;
+    byHour.get(hour).forEach(({ arc_id, regime, dLdk }) => {
+      if (!acum.has(arc_id)) {
+        // Primera vez que aparece este arco: registrar
+        acum.set(arc_id, { regime, dLdk });
+      } else if (!acum.get(arc_id).regime && regime) {
+        // Ya existe pero sin régimen: actualizar con el que sí tiene
         acum.set(arc_id, { regime, dLdk });
       }
     });
-  });
+  }
   return acum.size > 0 ? acum : null;
 }
 
@@ -365,8 +373,11 @@ async function _ruidoPintarTodosArcos(entry, criticos) {
   _ruidoClearCriticos();
   if (!_ruidoMap || !entry) return;
 
+  const token = _rutaArcosToken;   // capturar token actual
+
   const [okR, okA] = await Promise.all([_ruidoLoadRedvial(), _ruidoLoadRutaArcos()]);
   if (!okR || !okA) return;
+  if (_rutaArcosToken !== token) return;   // ruta cambió mientras cargaba — abortar
 
   const oid     = String(entry.feature.properties.owner_id ?? '');
   const arcMap  = _rutaArcosHasta(oid);   // todos los arcos (sin límite de hora)
@@ -387,11 +398,14 @@ async function _ruidoPintarTodosArcos(entry, criticos) {
 
 // ── Actualizar arcos durante la animación (hasta hora `hour`) ─────────────────
 async function _ruidoActualizarArcosHora(entry, hour, criticos) {
-  _ruidoClearCriticos();
+  _ruidoClearCriticos(true);   // silent: no invalidar el token en cada frame
   if (!_ruidoMap || !entry) return;
+
+  const token = _rutaArcosToken;
 
   const [okR, okA] = await Promise.all([_ruidoLoadRedvial(), _ruidoLoadRutaArcos()]);
   if (!okR || !okA) return;
+  if (_rutaArcosToken !== token) return;   // ruta cambió — abortar
 
   const oid    = String(entry.feature.properties.owner_id ?? '');
   const arcMap = _rutaArcosHasta(oid, hour);
