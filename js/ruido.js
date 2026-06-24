@@ -379,14 +379,11 @@ function ruidoSyncRoute(busId) {
   document.getElementById('map-ruido-empty').style.display = 'none';
   document.getElementById('map-ruido-wrap').style.display  = 'block';
 
-  // Ruta base (semitransparente, como fondo de los segmentos)
-  _ruidoRouteLayer = L.polyline(entry.coords, {
-    color: entry.color, weight: 3, opacity: 0.3,
-  }).addTo(_ruidoMap);
-
-  _ruidoMap.fitBounds(_ruidoRouteLayer.getBounds(), { padding: [30, 30] });
-
-  _ruidoMap.fitBounds(_ruidoRouteLayer.getBounds(), { padding: [30, 30] });
+  // NO dibujamos la polilínea OSRM — los arcos de RedVial son la geometría principal.
+  // Solo usamos coords para hacer fitBounds mientras los arcos cargan.
+  if (entry.coords?.length) {
+    _ruidoMap.fitBounds(L.latLngBounds(entry.coords), { padding: [30, 30] });
+  }
 
   ruidoAnimState.targetId = busId;
   const p   = entry.feature.properties;
@@ -976,9 +973,6 @@ function _ruidoPaintHour(hour) {
   // Hexágonos de nivel de ruido ambiente
   if (!_ruidoByHour || !_ruidoByHour.has(hour)) {
     _ruidoUpdateHourBadge(hour, 0);
-    // Aun sin hexágonos, pintar segmentos si hay coord_arcos
-    const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
-    if (entry) _ruidoPaintSegmentos(entry);
     return;
   }
 
@@ -1011,10 +1005,6 @@ function _ruidoPaintHour(hour) {
 
   _ruidoLayerGrp.addTo(_ruidoMap);
   _ruidoUpdateHourBadge(hour, hexMap.size);
-
-  // Superponer segmentos de arco coloreados por dLdk (si el GeoJSON los trae)
-  const _entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
-  if (_entry) _ruidoPaintSegmentos(_entry);
 }
 
 function _ruidoUpdateHourBadge(hour, nHex) {
@@ -1058,14 +1048,11 @@ function ruidoAnimPlay() {
   _ruidoClearSegLayers();
   _ruidoClearCriticos();   // ocultar arcos críticos durante la animación
 
-  if (!ruidoAnimState.animLayer) {
-    ruidoAnimState.animLayer = L.polyline([], {
-      color: entry.color, weight: 4, opacity: 1, smoothFactor: 1,
-    }).addTo(_ruidoMap);
-  }
+  // Solo el punto móvil — la geometría la dan los arcos de RedVial
   if (!ruidoAnimState.animDot) {
     ruidoAnimState.animDot = L.circleMarker(entry.coords[0], {
-      radius: 7, fillColor: entry.color, fillOpacity: 1, color: '#fff', weight: 2,
+      radius: 7, fillColor: '#ffffff', fillOpacity: 1,
+      color: '#1a1814', weight: 2,
     }).addTo(_ruidoMap);
   }
 
@@ -1094,14 +1081,7 @@ function ruidoAnimFrame(ts) {
 
   const shown = Math.max(2, Math.floor(ruidoAnimState.progress * (n - 1)) + 1);
 
-  // Polilínea de progreso (semitransparente si hay arcos, para que se vean los segmentos)
-  const hasArcos = _ruidoHasArcos(entry);
-  ruidoAnimState.animLayer.setStyle({ opacity: hasArcos ? 0.2 : 1 });
-  ruidoAnimState.animLayer.setLatLngs(coords.slice(0, shown));
-
-  // Segmentos coloreados por dLdk encima
-  if (hasArcos) _ruidoUpdateAnimSegments(entry, shown);
-
+  // Mover punto de posición sobre la ruta
   ruidoAnimState.animDot.setLatLng(coords[shown - 1]);
 
   const pct = (ruidoAnimState.progress * 100).toFixed(0);
@@ -1136,15 +1116,10 @@ function ruidoAnimReset() {
   _ruidoClearAnimSegs();
   _ruidoClearCriticos();
 
-  // Restaurar ruta base + segmentos de arco estáticos
+  // Restaurar arcos de RedVial al resetear
   if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoMap) {
     const entry = gpsLayers[ruidoAnimState.targetId];
-    _ruidoRouteLayer = L.polyline(entry.coords, {
-      color: entry.color, weight: 3, opacity: _ruidoHasArcos(entry) ? 0.3 : 0.5,
-    }).addTo(_ruidoMap);
-    _ruidoPaintSegmentos(entry);
-    // Restaurar todos los arcos por encima
-    const diag = _ruidoDiagnosticoVehiculo(entry);
+    const diag  = _ruidoDiagnosticoVehiculo(entry);
     _ruidoPintarTodosArcos(entry, diag?.criticos || []);
   }
 
