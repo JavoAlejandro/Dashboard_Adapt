@@ -426,18 +426,17 @@ function ruidoSyncRoute(busId) {
   if (!_ruidoMap) return;   // sub-tab Ruido aún no se ha abierto — nada que hacer todavía
 
   // ── Limpieza completa de TODO lo relacionado a la ruta anterior ────────────
-  // Importante: limpiar ANTES de tocar ruidoAnimState.targetId, porque
-  // ruidoAnimReset() usa targetId para decidir qué restaurar.
-  if (ruidoAnimState.rafId) cancelAnimationFrame(ruidoAnimState.rafId);
-  ruidoAnimState.active   = false;
+  _ruidoAnimStop();   // para animación, limpia timer/raf, incrementa token
   ruidoAnimState.progress = 0;
+  _ruidoAnimHoraIdx       = 0;
   if (ruidoAnimState.animLayer && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animLayer); ruidoAnimState.animLayer = null; }
   if (ruidoAnimState.animDot   && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animDot);   ruidoAnimState.animDot   = null; }
   if (_ruidoRouteLayer && _ruidoMap) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
   if (_ruidoLayerGrp   && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp);   _ruidoLayerGrp   = null; }
   _ruidoCurrentHour      = null;
+  _ruidoLastAnimHour     = null;
   _ruidoHexEnVentana     = null;
-  ruidoAnimState.targetId = null;   // limpiar referencia ANTES de resetear UI
+  ruidoAnimState.targetId = null;
 
   // Resetear controles de animación (botones, barra de progreso, badges)
   const _fill  = document.getElementById('ruido-anim-fill');
@@ -552,53 +551,101 @@ function _ruidoAgruparPingsPorHora(entry) {
 }
 
 // Precalcula, PARA CADA HORA del recorrido, el set de hexágonos dentro del
-// radio respecto a los pings que ocurrieron específicamente en esa hora
-// (no respecto a la ruta completa). Esto evita que una hora "contamine"
-// el promedio con tramos de la ruta que el camión aún no había recorrido.
+// radio de 400m respecto a los CENTROIDES DE LOS ARCOS de esa hora
+// (desde ruta_arcos_por_vehiculo.csv + redvial_arcos.geojson).
+// Reemplaza el cálculo anterior basado en pings OSRM.
 function _ruidoComputarVentana(entry) {
   _ruidoVentanaPorHora = null;
-  _ruidoHexEnVentana   = null;   // se mantiene por compatibilidad, ver nota abajo
+  _ruidoHexEnVentana   = null;
   if (!_ruidoLoaded || !entry) return;
 
-  const pingsPorHora = _ruidoAgruparPingsPorHora(entry);
-  if (pingsPorHora.size === 0) return;
+  const oid = String(entry.feature.properties.owner_id ?? '');
 
-  // Todos los hexágonos únicos presentes en el dataset de ruido (universo de búsqueda)
-  const todosHex = new Set();
-  _ruidoByHour.forEach(hexMap => hexMap.forEach((_, hexId) => todosHex.add(hexId)));
+  // Intentar usar arcos de RedVial si están disponibles
+  const byHour = _rutaArcosData?.get(oid);
 
-  _ruidoVentanaPorHora = new Map();
-  let totalEnAlgunaHora = new Set();
+  if (byHour && _redvialIndex) {
+    // ── Nuevo: centroides de arcos por hora ───────────────────────────────────
+    const todosHex = new Set();
+    _ruidoByHour.forEach(hexMap => hexMap.forEach((_, hexId) => todosHex.add(hexId)));
 
-  pingsPorHora.forEach((pingsHora, hour) => {
-    // Submuestrear: con tramos de 1 hora normalmente hay pocos pings, pero
-    // por seguridad limitamos a ~40 puntos representativos del tramo.
-    const step = Math.max(1, Math.floor(pingsHora.length / 40));
-    const muestra = [];
-    for (let i = 0; i < pingsHora.length; i += step) muestra.push(pingsHora[i]);
+    _ruidoVentanaPorHora = new Map();
+    let totalEnAlgunaHora = new Set();
 
-    const dentro = new Set();
-    todosHex.forEach(hexId => {
-      const centro = _ruidoHexCentro(hexId);
-      if (!centro) return;
-      const [hLat, hLon] = centro;
-      const cerca = muestra.some(([lat, lon]) =>
-        _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
-      );
-      if (cerca) dentro.add(hexId);
+    byHour.forEach((arcos, hour) => {
+      // Calcular centroide de cada arco de esta hora
+      const centros = [];
+      arcos.forEach(({ arc_id }) => {
+        const feat = _redvialIndex.get(arc_id);
+        if (!feat) return;
+        const coords = feat.geometry?.coordinates;
+        if (!coords?.length) return;
+        // Centroide simple: media de todos los vértices del LineString
+        let sumLat = 0, sumLon = 0;
+        coords.forEach(([lon, lat]) => { sumLat += lat; sumLon += lon; });
+        centros.push([sumLat / coords.length, sumLon / coords.length]);
+      });
+
+      if (centros.length === 0) {
+        _ruidoVentanaPorHora.set(hour, new Set());
+        return;
+      }
+
+      const dentro = new Set();
+      todosHex.forEach(hexId => {
+        const centro = _ruidoHexCentro(hexId);
+        if (!centro) return;
+        const [hLat, hLon] = centro;
+        const cerca = centros.some(([lat, lon]) =>
+          _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
+        );
+        if (cerca) dentro.add(hexId);
+      });
+
+      _ruidoVentanaPorHora.set(hour, dentro);
+      dentro.forEach(h => totalEnAlgunaHora.add(h));
     });
 
-    _ruidoVentanaPorHora.set(hour, dentro);
-    dentro.forEach(h => totalEnAlgunaHora.add(h));
-  });
+    _ruidoHexEnVentana = totalEnAlgunaHora;
 
-  // _ruidoHexEnVentana ahora representa la UNIÓN de todas las horas — se usa
-  // solo como fallback si alguna función vieja lo consulta directamente.
-  _ruidoHexEnVentana = totalEnAlgunaHora;
+  } else {
+    // ── Fallback: pings OSRM (si aún no cargaron los arcos) ──────────────────
+    const pingsPorHora = _ruidoAgruparPingsPorHora(entry);
+    if (pingsPorHora.size === 0) return;
+
+    const todosHex = new Set();
+    _ruidoByHour.forEach(hexMap => hexMap.forEach((_, hexId) => todosHex.add(hexId)));
+
+    _ruidoVentanaPorHora = new Map();
+    let totalEnAlgunaHora = new Set();
+
+    pingsPorHora.forEach((pingsHora, hour) => {
+      const step   = Math.max(1, Math.floor(pingsHora.length / 40));
+      const muestra = [];
+      for (let i = 0; i < pingsHora.length; i += step) muestra.push(pingsHora[i]);
+
+      const dentro = new Set();
+      todosHex.forEach(hexId => {
+        const centro = _ruidoHexCentro(hexId);
+        if (!centro) return;
+        const [hLat, hLon] = centro;
+        const cerca = muestra.some(([lat, lon]) =>
+          _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
+        );
+        if (cerca) dentro.add(hexId);
+      });
+
+      _ruidoVentanaPorHora.set(hour, dentro);
+      dentro.forEach(h => totalEnAlgunaHora.add(h));
+    });
+
+    _ruidoHexEnVentana = totalEnAlgunaHora;
+  }
 
   const badge = document.getElementById('ruido-window-badge');
   if (badge) {
-    badge.textContent = `Ventana: ${_ruidoRadioKm} km · ${totalEnAlgunaHora.size.toLocaleString()} hexágonos en corredor (todas las horas)`;
+    const nHex = _ruidoHexEnVentana?.size ?? 0;
+    badge.textContent = `${_ruidoRadioKm * 1000}m · ${nHex.toLocaleString()} hexágonos`;
     badge.style.display = 'block';
   }
 }
@@ -1107,7 +1154,26 @@ function _ruidoUpdateHourBadge(hour, nHex) {
   if (badge) badge.style.display = 'flex';
 }
 
-// ─── MOTOR DE ANIMACIÓN PROPIO DEL PANEL RUIDO ───────────────────────────────
+// ─── MOTOR DE ANIMACIÓN — 5 SEGUNDOS POR HORA ────────────────────────────────
+// La animación avanza hora a hora con un gap fijo de 5s.
+// En cada paso: revela los arcos de esa hora (acumulados) + pinta sus hexágonos.
+// Sin requestAnimationFrame continuo — usa setTimeout entre horas.
+
+let _ruidoAnimTimer    = null;   // setTimeout handle activo
+let _ruidoAnimHoras    = [];     // lista ordenada de horas únicas de la ruta
+let _ruidoAnimHoraIdx  = 0;      // índice actual en _ruidoAnimHoras
+let _ruidoAnimToken    = 0;      // token de cancelación — se incrementa al parar/resetear
+
+function _ruidoAnimStop() {
+  // Para la animación sin restaurar el estado visual
+  if (_ruidoAnimTimer) { clearTimeout(_ruidoAnimTimer); _ruidoAnimTimer = null; }
+  if (ruidoAnimState.rafId) { cancelAnimationFrame(ruidoAnimState.rafId); ruidoAnimState.rafId = null; }
+  ruidoAnimState.active = false;
+  _ruidoAnimToken++;   // invalidar cualquier setTimeout pendiente de iteraciones anteriores
+  document.getElementById('ruido-anim-icon-play').style.display  = '';
+  document.getElementById('ruido-anim-icon-pause').style.display = 'none';
+}
+
 function ruidoAnimPlay() {
   if (!_ruidoLoaded) {
     document.getElementById('ruido-anim-note').textContent = '⏳ Cargando datos de ruido…';
@@ -1115,11 +1181,9 @@ function ruidoAnimPlay() {
     return;
   }
 
+  // Pause si ya está activa
   if (ruidoAnimState.active) {
-    ruidoAnimState.active = false;
-    cancelAnimationFrame(ruidoAnimState.rafId);
-    document.getElementById('ruido-anim-icon-play').style.display  = '';
-    document.getElementById('ruido-anim-icon-pause').style.display = 'none';
+    _ruidoAnimStop();
     return;
   }
 
@@ -1129,125 +1193,116 @@ function ruidoAnimPlay() {
     return;
   }
 
-  ruidoAnimState.active = true;
-  ruidoAnimState.lastTs = null;
-  _ruidoLastAnimHour    = null;   // forzar redraw de arcos desde la primera hora
-  if (ruidoAnimState.progress >= 1) ruidoAnimState.progress = 0;
+  const entry = gpsLayers[targetId];
+  const oid   = String(entry.feature.properties.owner_id ?? '');
+
+  // Obtener horas únicas ordenadas desde _rutaArcosData
+  const byHour = _rutaArcosData?.get(oid);
+  if (!byHour || byHour.size === 0) {
+    document.getElementById('ruido-anim-note').textContent = '⚠ Sin datos de arcos para este camión';
+    return;
+  }
+  _ruidoAnimHoras   = [...byHour.keys()].sort((a, b) => a - b);
+  _ruidoAnimHoraIdx = 0;   // empezar desde la primera hora
+
+  // Limpiar estado visual
+  _ruidoClearCriticos();
+  _ruidoClearSegLayers();
+  if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
+  _ruidoCurrentHour = null;
+  _ruidoLastAnimHour = null;
+  if (ruidoAnimState.animDot && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animDot); ruidoAnimState.animDot = null; }
+
+  ruidoAnimState.active   = true;
+  ruidoAnimState.progress = 0;
+  _ruidoAnimToken++;   // nuevo token para esta sesión de animación
 
   document.getElementById('ruido-anim-icon-play').style.display  = 'none';
   document.getElementById('ruido-anim-icon-pause').style.display = '';
 
-  const entry = gpsLayers[targetId];
-  if (_ruidoRouteLayer) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
-  _ruidoClearSegLayers();
-  _ruidoClearCriticos();   // ocultar arcos críticos durante la animación
-
-  // Solo el punto móvil — la geometría la dan los arcos de RedVial
-  if (!ruidoAnimState.animDot) {
-    ruidoAnimState.animDot = L.circleMarker(entry.coords[0], {
-      radius: 7, fillColor: '#ffffff', fillOpacity: 1,
-      color: '#1a1814', weight: 2,
-    }).addTo(_ruidoMap);
-  }
-
-  ruidoAnimState.rafId = requestAnimationFrame(ruidoAnimFrame);
+  _ruidoAnimStep(entry, _ruidoAnimToken);
 }
 
-function ruidoAnimFrame(ts) {
-  if (!ruidoAnimState.active) return;
-
-  if (ruidoAnimState.lastTs === null) {
-    ruidoAnimState.lastTs = ts;
-    ruidoAnimState.rafId  = requestAnimationFrame(ruidoAnimFrame);
+function _ruidoAnimStep(entry, token) {
+  // Verificar que la animación sigue vigente (no cancelada ni cambiada de ruta)
+  if (!ruidoAnimState.active || _ruidoAnimToken !== token) return;
+  if (_ruidoAnimHoraIdx >= _ruidoAnimHoras.length) {
+    // Animación completa
+    _ruidoAnimStop();
+    _ruidoLastAnimHour = null;
+    document.getElementById('ruido-anim-note').textContent = '✓ Recorrido completo';
+    // Restaurar vista completa
+    const diag = _ruidoDiagnosticoVehiculo(entry);
+    _ruidoPintarTodosArcos(entry, diag?.criticos || []);
+    // Barra al 100%
+    document.getElementById('ruido-anim-fill').style.width  = '100%';
+    document.getElementById('ruido-anim-thumb').style.left  = '100%';
+    document.getElementById('ruido-anim-label').textContent = '100%';
     return;
   }
 
-  const dt = Math.min((ts - ruidoAnimState.lastTs) / 1000, 0.1);
-  ruidoAnimState.lastTs = ts;
+  const hour  = _ruidoAnimHoras[_ruidoAnimHoraIdx];
+  const total = _ruidoAnimHoras.length;
 
-  const speedSel = document.getElementById('ruido-anim-speed');
-  const speed    = speedSel ? parseFloat(speedSel.value) : 1;
-  const entry    = gpsLayers[ruidoAnimState.targetId];
-  const coords   = entry.coords;
-  const n        = coords.length;
-
-  ruidoAnimState.progress = Math.min(1, ruidoAnimState.progress + speed * dt / 20);
-
-  const shown = Math.max(2, Math.floor(ruidoAnimState.progress * (n - 1)) + 1);
-
-  // Mover punto de posición sobre la ruta OSRM (referencia temporal)
-  ruidoAnimState.animDot.setLatLng(coords[shown - 1]);
-
-  const pct = (ruidoAnimState.progress * 100).toFixed(0);
+  // Actualizar barra de progreso
+  const pct = Math.round((_ruidoAnimHoraIdx / total) * 100);
   document.getElementById('ruido-anim-fill').style.width  = pct + '%';
   document.getElementById('ruido-anim-thumb').style.left  = pct + '%';
   document.getElementById('ruido-anim-label').textContent = pct + '%';
+  document.getElementById('ruido-anim-note').textContent  =
+    `${String(hour).padStart(2,'0')}:00 h  ·  ${_ruidoAnimHoraIdx + 1} / ${total}`;
 
-  // Hora actual desde coord_timestamps
-  const currentHour = _ruidoHourAtIndex(entry, shown - 1);
-  _ruidoPaintForPoint(entry, shown - 1);
+  // 1) Revelar arcos acumulados hasta esta hora
+  const diag = _ruidoDiagnosticoVehiculo(entry);
+  _ruidoActualizarArcosHora(entry, hour, diag?.criticos || []);
 
-  // Revelar arcos solo cuando cambia la hora — evitar redraw en cada frame
-  if (currentHour !== null && currentHour !== _ruidoLastAnimHour) {
-    _ruidoLastAnimHour = currentHour;
-    const diag = _ruidoDiagnosticoVehiculo(entry);
-    _ruidoActualizarArcosHora(entry, currentHour, diag?.criticos || []);
-  }
+  // 2) Pintar hexágonos de esta hora
+  _ruidoPaintHour(hour);
 
-  if (ruidoAnimState.progress >= 1) {
-    ruidoAnimState.active      = false;
-    _ruidoLastAnimHour         = null;
-    document.getElementById('ruido-anim-icon-play').style.display  = '';
-    document.getElementById('ruido-anim-icon-pause').style.display = 'none';
-    document.getElementById('ruido-anim-note').textContent = '✓ Recorrido completo';
-    // Restaurar vista completa al terminar
-    const diag = _ruidoDiagnosticoVehiculo(entry);
-    _ruidoPintarTodosArcos(entry, diag?.criticos || []);
-    return;
-  }
+  _ruidoAnimHoraIdx++;
 
-  ruidoAnimState.rafId = requestAnimationFrame(ruidoAnimFrame);
+  // Velocidad: el selector controla el multiplicador del gap de 5s
+  const speedSel = document.getElementById('ruido-anim-speed');
+  const speed    = speedSel ? parseFloat(speedSel.value) : 1;
+  const gap      = Math.round(5000 / speed);   // 5000ms base / velocidad
+
+  _ruidoAnimTimer = setTimeout(() => _ruidoAnimStep(entry, token), gap);
 }
 
+function ruidoAnimFrame() {}   // mantener firma por compatibilidad — ya no se usa
+
 function ruidoAnimReset() {
-  ruidoAnimState.active   = false;
-  ruidoAnimState.progress = 0;
-  if (ruidoAnimState.rafId) cancelAnimationFrame(ruidoAnimState.rafId);
+  _ruidoAnimStop();
+  ruidoAnimState.progress  = 0;
+  _ruidoAnimHoraIdx        = 0;
+  _ruidoLastAnimHour       = null;
+
   if (ruidoAnimState.animLayer && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animLayer); ruidoAnimState.animLayer = null; }
   if (ruidoAnimState.animDot   && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animDot);   ruidoAnimState.animDot   = null; }
 
   _ruidoClearAnimSegs();
   _ruidoClearCriticos();
-  _ruidoLastAnimHour = null;
 
-  // Restaurar arcos de RedVial al resetear
+  if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
+  _ruidoCurrentHour = null;
+
+  // Restaurar arcos completos
   if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoMap) {
     const entry = gpsLayers[ruidoAnimState.targetId];
     const diag  = _ruidoDiagnosticoVehiculo(entry);
     _ruidoPintarTodosArcos(entry, diag?.criticos || []);
   }
 
-  if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
-  _ruidoCurrentHour = null;
-
   const badge = document.getElementById('ruido-hour-badge');
   if (badge) badge.style.display = 'none';
-
   const _fill  = document.getElementById('ruido-anim-fill');
   const _thumb = document.getElementById('ruido-anim-thumb');
   const _label = document.getElementById('ruido-anim-label');
-  const _play  = document.getElementById('ruido-anim-icon-play');
-  const _pause = document.getElementById('ruido-anim-icon-pause');
   if (_fill)  _fill.style.width    = '0%';
   if (_thumb) _thumb.style.left    = '0%';
   if (_label) _label.textContent   = '0%';
-  if (_play)  _play.style.display  = '';
-  if (_pause) _pause.style.display = 'none';
-
-  // Repintar hora inicial
-  if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoLoaded) {
-    _ruidoPaintForPoint(gpsLayers[ruidoAnimState.targetId], 0);
-  }
+  const note = document.getElementById('ruido-anim-note');
+  if (note) note.textContent = '';
 }
 
 // ─── LEYENDA ──────────────────────────────────────────────────────────────────
