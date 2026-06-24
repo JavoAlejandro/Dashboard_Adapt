@@ -226,27 +226,62 @@ function _ruidoClearCriticos() {
   }
 }
 
-async function _ruidoPintarCriticos(criticos) {
+// ── Pintar TODOS los arcos de una ruta (owner_id × dia × mes) ────────────────
+// Coloreados por dLdk (gradiente divergente), con los arcos críticos
+// resaltados encima con mayor grosor y color por régimen.
+async function _ruidoPintarTodosArcos(entry, criticos) {
   _ruidoClearCriticos();
-  if (!_ruidoMap || !criticos?.length) return;
+  if (!_ruidoMap || !entry) return;
 
   const ok = await _ruidoLoadRedvial();
   if (!ok || !_redvialIndex) return;
 
+  const p   = entry.feature.properties;
+  const oid = String(p.owner_id ?? '');
+  const dia = String(p.dia      ?? '');
+  const mes = String(p.mes      ?? '');
+  const rutaKey = `${oid}|${dia}|${mes}`;
+
+  const arcMap = _camionArcosData?.get(rutaKey);
+  if (!arcMap || arcMap.size === 0) {
+    // Sin datos de arcos para esta ruta: solo pintar críticos si existen
+    if (criticos?.length) _ruidoPintarCriticos(criticos);
+    return;
+  }
+
+  // Set de arc_ids críticos para resaltado diferenciado
+  const critSet = new Set((criticos || []).map(c => String(c.arc_id)));
+
   _criticosLayer = L.layerGroup();
 
-  criticos.forEach(({ arc_id, regime, pct }) => {
+  // ── Capa 1: todos los arcos coloreados por dLdk ───────────────────────────
+  arcMap.forEach(({ regime, dLdk }, arcId) => {
+    if (critSet.has(arcId)) return;   // los críticos van en capa 2
+    const feat = _redvialIndex.get(arcId);
+    if (!feat) return;
+    const color = _ruidoDldkColor(dLdk);
+    L.geoJSON(feat, {
+      style: {
+        color,
+        weight:  3,
+        opacity: 0.75,
+        pane:    'ruidoCriticosPane',
+      },
+      interactive: false,
+    }).addTo(_criticosLayer);
+  });
+
+  // ── Capa 2: arcos críticos resaltados encima ──────────────────────────────
+  (criticos || []).forEach(({ arc_id, regime, pct }) => {
     const feat = _redvialIndex.get(String(arc_id));
     if (!feat) return;
-
     const color = _criticosColor(regime);
-
-    // Halo blanco debajo para legibilidad sobre hexágonos
+    // Halo blanco
     L.geoJSON(feat, {
-      style: { color: '#ffffff', weight: 11, opacity: 0.6, pane: 'ruidoCriticosPane' },
+      style: { color: '#ffffff', weight: 11, opacity: 0.55, pane: 'ruidoCriticosPane' },
+      interactive: false,
     }).addTo(_criticosLayer);
-
-    // Línea coloreada principal
+    // Línea coloreada
     L.geoJSON(feat, {
       style: { color, weight: 6, opacity: 0.95, pane: 'ruidoCriticosPane' },
     })
@@ -259,9 +294,36 @@ async function _ruidoPintarCriticos(criticos) {
   });
 
   _criticosLayer.addTo(_ruidoMap);
-  // bringToFront: asegurar que queda encima de hexágonos y gradiente continuo
-  document.querySelector('.leaflet-pane.leaflet-ruidoCriticosPane-pane') &&
-    (_criticosLayer.eachLayer(l => { try { l.bringToFront(); } catch {} }));
+}
+
+// ── Pintar solo los arcos críticos (fallback sin _camionArcosData) ────────────
+async function _ruidoPintarCriticos(criticos) {
+  _ruidoClearCriticos();
+  if (!_ruidoMap || !criticos?.length) return;
+
+  const ok = await _ruidoLoadRedvial();
+  if (!ok || !_redvialIndex) return;
+
+  _criticosLayer = L.layerGroup();
+  criticos.forEach(({ arc_id, regime, pct }) => {
+    const feat = _redvialIndex.get(String(arc_id));
+    if (!feat) return;
+    const color = _criticosColor(regime);
+    L.geoJSON(feat, {
+      style: { color: '#ffffff', weight: 11, opacity: 0.55, pane: 'ruidoCriticosPane' },
+      interactive: false,
+    }).addTo(_criticosLayer);
+    L.geoJSON(feat, {
+      style: { color, weight: 6, opacity: 0.95, pane: 'ruidoCriticosPane' },
+    })
+    .bindTooltip(
+      `<b style="font-family:'Syne Mono',monospace;font-size:10px">Arco ${arc_id}</b><br>` +
+      `${regime || '—'} · ${pct}% del impacto evitable`,
+      { sticky: true, className: 'leaflet-tip' }
+    )
+    .addTo(_criticosLayer);
+  });
+  _criticosLayer.addTo(_ruidoMap);
 }
 
 // ─── SINCRONIZAR RUTA ACTIVA DESDE EXPOSICIÓN ────────────────────────────────
@@ -340,11 +402,9 @@ function ruidoSyncRoute(busId) {
   }
   if (_camionLoaded) {
     _ruidoRenderVehiculoPanel(entry);
-    // Pintar arcos críticos sobre el mapa (async — carga RedVial si hace falta)
+    // Pintar todos los arcos de la ruta + resaltado de críticos
     const diag = _ruidoDiagnosticoVehiculo(entry);
-    if (diag && !diag.sin_evitables && diag.criticos?.length) {
-      _ruidoPintarCriticos(diag.criticos);
-    }
+    _ruidoPintarTodosArcos(entry, diag?.criticos || []);
   }
 }
 
@@ -472,6 +532,7 @@ function ruidoSetRadioKm(km) {
 // no se cruzan con hexagonos_hora_rm.
 let _camionData      = null;   // Map<owner_id, Map<"h3|hour", {R, R_v, h3, hour}>>
 let _camionDiagData  = null;   // Map<owner_id, Map<"arc_id|hour", {arc_id,hour,contrib,R,regime,length_m}>>
+let _camionArcosData = null;   // Map<"owner_id|dia|mes", Map<arc_id, {regime, dLdk}>>
 let _camionLoaded    = false;
 let _camionLoading   = false;
 
@@ -490,10 +551,14 @@ async function _ruidoEnsureCamionLoaded() {
           // Índice diagnóstico: owner_id → Map<"arc_id|hour", {arc_id,hour,contrib,R,regime,length_m}>
           _camionDiagData = new Map();
 
+          // Índice de arcos por ruta exacta: "owner_id|dia|mes" → Map<arc_id, {regime, dLdk}>
+          // Permite pintar TODOS los arcos de una ruta específica sin mezclar días.
+          if (!_camionArcosData) _camionArcosData = new Map();
+
           rows.forEach(r => {
-            const oid    = String(r.owner_id ?? '');
-            const h3     = String(r.h3_index ?? '');
-            const hour   = Math.round(+r.hour);
+            const oid   = String(r.owner_id ?? '');
+            const h3    = String(r.h3_index ?? '');
+            const hour  = Math.round(+r.hour);
             if (!oid || !h3 || isNaN(hour)) return;
 
             // ── R por hexágono-hora ─────────────────────────────────────────
@@ -507,7 +572,7 @@ async function _ruidoEnsureCamionLoaded() {
             });
 
             // ── Diagnóstico: contrib = dLdk × R por (arc_id, hour) ─────────
-            const arcId  = String(r.arc_id  ?? h3);    // fallback a h3 si no hay arc_id
+            const arcId  = String(r.arc_id  ?? h3);
             const dLdk   = +r.dLdk    || 0;
             const R_val  = +r.R       || 0;
             const contrib = dLdk * R_val;
@@ -526,6 +591,19 @@ async function _ruidoEnsureCamionLoaded() {
               regime:   regime      || dp.regime,
               length_m: Math.max(dp.length_m, length),
             });
+
+            // ── Arcos por ruta exacta (owner_id|dia|mes) ───────────────────
+            const dia = String(r.dia ?? '');
+            const mes = String(r.mes ?? '');
+            if (!dia) return;
+            const rutaKey = `${oid}|${dia}|${mes}`;
+            if (!_camionArcosData.has(rutaKey)) _camionArcosData.set(rutaKey, new Map());
+            const arcMap = _camionArcosData.get(rutaKey);
+            // Si el mismo arc_id aparece varias veces, mantener el de mayor |dLdk|
+            const prevArc = arcMap.get(arcId);
+            if (!prevArc || Math.abs(dLdk) > Math.abs(prevArc.dLdk || 0)) {
+              arcMap.set(arcId, { regime, dLdk });
+            }
           });
 
           _camionLoaded  = true;
@@ -1039,11 +1117,9 @@ function ruidoAnimFrame(ts) {
     document.getElementById('ruido-anim-icon-play').style.display  = '';
     document.getElementById('ruido-anim-icon-pause').style.display = 'none';
     document.getElementById('ruido-anim-note').textContent = '✓ Recorrido completo';
-    // Restaurar arcos críticos al terminar la animación
+    // Restaurar todos los arcos al terminar la animación
     const diag = _ruidoDiagnosticoVehiculo(entry);
-    if (diag && !diag.sin_evitables && diag.criticos?.length) {
-      _ruidoPintarCriticos(diag.criticos);
-    }
+    _ruidoPintarTodosArcos(entry, diag?.criticos || []);
     return;
   }
 
@@ -1067,11 +1143,9 @@ function ruidoAnimReset() {
       color: entry.color, weight: 3, opacity: _ruidoHasArcos(entry) ? 0.3 : 0.5,
     }).addTo(_ruidoMap);
     _ruidoPaintSegmentos(entry);
-    // Restaurar arcos críticos por encima
+    // Restaurar todos los arcos por encima
     const diag = _ruidoDiagnosticoVehiculo(entry);
-    if (diag && !diag.sin_evitables && diag.criticos?.length) {
-      _ruidoPintarCriticos(diag.criticos);
-    }
+    _ruidoPintarTodosArcos(entry, diag?.criticos || []);
   }
 
   if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
@@ -1453,11 +1527,9 @@ function _ruidoOnDiagDataReady() {
   if (!finalId || !gpsLayers[finalId]) return;
   const entry = gpsLayers[finalId];
   _ruidoRenderVehiculoPanel(entry);
-  // Pintar arcos críticos ahora que _camionDiagData está disponible
+  // Pintar todos los arcos de la ruta ahora que _camionDiagData está disponible
   const diag = _ruidoDiagnosticoVehiculo(entry);
-  if (diag && !diag.sin_evitables && diag.criticos?.length) {
-    _ruidoPintarCriticos(diag.criticos);
-  }
+  _ruidoPintarTodosArcos(entry, diag?.criticos || []);
   // Re-renderizar Impacto también si los datos de hexágonos ya cargaron
   if (_ruidoLoaded) {
     _ruidoComputarVentana(entry);
