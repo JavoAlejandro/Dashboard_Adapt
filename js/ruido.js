@@ -154,10 +154,114 @@ function ruidoInitMap() {
     subdomains: 'abcd', maxZoom: 19,
   }).addTo(_ruidoMap);
 
-  // Pane para hexágonos, debajo de las rutas
+  // Pane para hexágonos — debajo de rutas y arcos críticos
   const p = _ruidoMap.createPane('ruidoPane');
   p.style.zIndex        = '300';
   p.style.pointerEvents = 'none';
+
+  // Pane para arcos críticos — encima de todo (hexágonos + gradiente continuo)
+  const pCrit = _ruidoMap.createPane('ruidoCriticosPane');
+  pCrit.style.zIndex        = '500';
+  pCrit.style.pointerEvents = 'none';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ARCOS CRÍTICOS — resaltado sobre el mapa usando geometría de la RedVial
+//
+// Flujo:
+//   1. _ruidoLoadRedvial()   → fetch lazy desde R2, indexa id_arco → Feature
+//   2. _ruidoPintarCriticos() → dibuja los top-5 con color por régimen
+//   3. _ruidoClearCriticos()  → limpia al cambiar de camión
+//
+// Paleta (nota técnica Arriagada):
+//   sensitive  → #4FC3F7  celeste
+//   transition → #FF8F00  ámbar (no gris, se confunde con la red)
+//   saturated  → #E53935  rojo
+// ══════════════════════════════════════════════════════════════════════════════
+
+const CRITICOS_COLOR = {
+  sensitive:  '#4FC3F7',
+  transition: '#FF8F00',
+  saturated:  '#E53935',
+};
+function _criticosColor(regime) {
+  const k = (regime || '').toLowerCase();
+  if (k.includes('sensitive') || k.includes('free'))    return CRITICOS_COLOR.sensitive;
+  if (k.includes('saturated') || k.includes('congest')) return CRITICOS_COLOR.saturated;
+  return CRITICOS_COLOR.transition;
+}
+
+let _redvialIndex   = null;   // Map<id_arco, GeoJSON Feature>
+let _redvialLoading = false;
+let _criticosLayer  = null;   // L.layerGroup con los arcos resaltados
+
+async function _ruidoLoadRedvial() {
+  if (_redvialIndex)   return true;
+  if (_redvialLoading) return false;
+  _redvialLoading = true;
+
+  const status = document.getElementById('ruido-status');
+  try {
+    const res = await r2Fetch('ruido/redvial_arcos.geojson');
+    const fc  = await res.json();
+    _redvialIndex = new Map();
+    (fc.features || []).forEach(f => {
+      const id = f.properties?.id_arco ?? f.properties?.arc_id;
+      if (id != null) _redvialIndex.set(String(id), f);
+    });
+    _redvialLoading = false;
+    console.log(`[RedVial] ${_redvialIndex.size} arcos indexados`);
+    return true;
+  } catch (err) {
+    _redvialLoading = false;
+    console.warn('[RedVial] No disponible:', err.message);
+    return false;
+  }
+}
+
+function _ruidoClearCriticos() {
+  if (_criticosLayer && _ruidoMap) {
+    _ruidoMap.removeLayer(_criticosLayer);
+    _criticosLayer = null;
+  }
+}
+
+async function _ruidoPintarCriticos(criticos) {
+  _ruidoClearCriticos();
+  if (!_ruidoMap || !criticos?.length) return;
+
+  const ok = await _ruidoLoadRedvial();
+  if (!ok || !_redvialIndex) return;
+
+  _criticosLayer = L.layerGroup();
+
+  criticos.forEach(({ arc_id, regime, pct }) => {
+    const feat = _redvialIndex.get(String(arc_id));
+    if (!feat) return;
+
+    const color = _criticosColor(regime);
+
+    // Halo blanco debajo para legibilidad sobre hexágonos
+    L.geoJSON(feat, {
+      style: { color: '#ffffff', weight: 11, opacity: 0.6, pane: 'ruidoCriticosPane' },
+    }).addTo(_criticosLayer);
+
+    // Línea coloreada principal
+    L.geoJSON(feat, {
+      style: { color, weight: 6, opacity: 0.95, pane: 'ruidoCriticosPane' },
+    })
+    .bindTooltip(
+      `<b style="font-family:'Syne Mono',monospace;font-size:10px">Arco ${arc_id}</b><br>` +
+      `${regime || '—'} · ${pct}% del impacto evitable`,
+      { sticky: true, className: 'leaflet-tip' }
+    )
+    .addTo(_criticosLayer);
+  });
+
+  _criticosLayer.addTo(_ruidoMap);
+  // bringToFront: asegurar que queda encima de hexágonos y gradiente continuo
+  document.querySelector('.leaflet-pane.leaflet-ruidoCriticosPane-pane') &&
+    (_criticosLayer.eachLayer(l => { try { l.bringToFront(); } catch {} }));
 }
 
 // ─── SINCRONIZAR RUTA ACTIVA DESDE EXPOSICIÓN ────────────────────────────────
@@ -205,9 +309,10 @@ function ruidoSyncRoute(busId) {
     return;
   }
 
-  // Limpiar también segmentos de arco de la ruta anterior
+  // Limpiar también segmentos de arco y arcos críticos de la ruta anterior
   _ruidoClearSegLayers();
   _ruidoClearAnimSegs();
+  _ruidoClearCriticos();
 
   document.getElementById('map-ruido-empty').style.display = 'none';
   document.getElementById('map-ruido-wrap').style.display  = 'block';
@@ -235,6 +340,11 @@ function ruidoSyncRoute(busId) {
   }
   if (_camionLoaded) {
     _ruidoRenderVehiculoPanel(entry);
+    // Pintar arcos críticos sobre el mapa (async — carga RedVial si hace falta)
+    const diag = _ruidoDiagnosticoVehiculo(entry);
+    if (diag && !diag.sin_evitables && diag.criticos?.length) {
+      _ruidoPintarCriticos(diag.criticos);
+    }
   }
 }
 
@@ -868,6 +978,7 @@ function ruidoAnimPlay() {
   const entry = gpsLayers[targetId];
   if (_ruidoRouteLayer) { _ruidoMap.removeLayer(_ruidoRouteLayer); _ruidoRouteLayer = null; }
   _ruidoClearSegLayers();
+  _ruidoClearCriticos();   // ocultar arcos críticos durante la animación
 
   if (!ruidoAnimState.animLayer) {
     ruidoAnimState.animLayer = L.polyline([], {
@@ -928,6 +1039,11 @@ function ruidoAnimFrame(ts) {
     document.getElementById('ruido-anim-icon-play').style.display  = '';
     document.getElementById('ruido-anim-icon-pause').style.display = 'none';
     document.getElementById('ruido-anim-note').textContent = '✓ Recorrido completo';
+    // Restaurar arcos críticos al terminar la animación
+    const diag = _ruidoDiagnosticoVehiculo(entry);
+    if (diag && !diag.sin_evitables && diag.criticos?.length) {
+      _ruidoPintarCriticos(diag.criticos);
+    }
     return;
   }
 
@@ -942,6 +1058,7 @@ function ruidoAnimReset() {
   if (ruidoAnimState.animDot   && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animDot);   ruidoAnimState.animDot   = null; }
 
   _ruidoClearAnimSegs();
+  _ruidoClearCriticos();
 
   // Restaurar ruta base + segmentos de arco estáticos
   if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoMap) {
@@ -950,6 +1067,11 @@ function ruidoAnimReset() {
       color: entry.color, weight: 3, opacity: _ruidoHasArcos(entry) ? 0.3 : 0.5,
     }).addTo(_ruidoMap);
     _ruidoPaintSegmentos(entry);
+    // Restaurar arcos críticos por encima
+    const diag = _ruidoDiagnosticoVehiculo(entry);
+    if (diag && !diag.sin_evitables && diag.criticos?.length) {
+      _ruidoPintarCriticos(diag.criticos);
+    }
   }
 
   if (_ruidoLayerGrp && _ruidoMap) { _ruidoMap.removeLayer(_ruidoLayerGrp); _ruidoLayerGrp = null; }
@@ -1331,6 +1453,11 @@ function _ruidoOnDiagDataReady() {
   if (!finalId || !gpsLayers[finalId]) return;
   const entry = gpsLayers[finalId];
   _ruidoRenderVehiculoPanel(entry);
+  // Pintar arcos críticos ahora que _camionDiagData está disponible
+  const diag = _ruidoDiagnosticoVehiculo(entry);
+  if (diag && !diag.sin_evitables && diag.criticos?.length) {
+    _ruidoPintarCriticos(diag.criticos);
+  }
   // Re-renderizar Impacto también si los datos de hexágonos ya cargaron
   if (_ruidoLoaded) {
     _ruidoComputarVentana(entry);
