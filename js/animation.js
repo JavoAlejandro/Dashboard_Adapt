@@ -53,9 +53,10 @@ function animPlay() {
   document.getElementById('anim-icon-play').style.display  = 'none';
   document.getElementById('anim-icon-pause').style.display = '';
 
-  // Hide full line, show animated layer
+  // Ocultar la ruta completa con opacity 0 (preserva event listeners y tooltips)
+  // NO usar removeLayer — destruye los handlers de hover/tooltip en L.geoJSON
   const entry = gpsLayers[targetId];
-  gpsMap.removeLayer(entry.layer);
+  entry.layer.setStyle({ opacity: 0, fillOpacity: 0 });
 
   if (!animState.animLayer) {
     animState.animLayer = L.polyline([], {
@@ -120,7 +121,10 @@ function animFrame(ts) {
     document.getElementById('anim-note').textContent = '✓ Recorrido completo';
     animHideVia();
     const e = gpsLayers[animState.targetId];
-    if (e && e.visible) e.layer.addTo(gpsMap);
+    if (e && e.visible) {
+      // Restaurar opacidad — NO usar addTo (ya está en el mapa, solo invisible)
+      e.layer.setStyle({ opacity: 1, fillOpacity: 0.6 });
+    }
     if (animState.animLayer) { gpsMap.removeLayer(animState.animLayer); animState.animLayer = null; }
     if (animState.animDot)   { gpsMap.removeLayer(animState.animDot);   animState.animDot   = null; }
     return;
@@ -135,10 +139,10 @@ function animReset() {
   if (animState.rafId) cancelAnimationFrame(animState.rafId);
   if (animState.animLayer && gpsMap) { gpsMap.removeLayer(animState.animLayer); animState.animLayer = null; }
   if (animState.animDot   && gpsMap) { gpsMap.removeLayer(animState.animDot);   animState.animDot   = null; }
-  // Restore full line if visible
+  // Restaurar visibilidad del layer — estaba hidden con opacity:0, NO removido
   if (animState.targetId && gpsLayers[animState.targetId]) {
     const entry = gpsLayers[animState.targetId];
-    if (entry.visible) entry.layer.addTo(gpsMap);
+    if (entry.visible) entry.layer.setStyle({ opacity: 1, fillOpacity: 0.6 });
   }
   // Guard all DOM — animReset() can be called before map UI renders
   const _fill  = document.getElementById('anim-fill');
