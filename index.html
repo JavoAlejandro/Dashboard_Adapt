@@ -450,6 +450,18 @@
       </div>
 
       <div class="map-gps-wrap" id="map-ruido-wrap" style="position:relative;display:none">
+        <!-- Botón: solo arcos (sin hexágonos) -->
+        <div style="position:absolute;bottom:10px;right:10px;z-index:500">
+          <button id="ruido-solo-arcos-btn"
+                  onclick="ruidoToggleSoloArcos()"
+                  title="Mostrar solo arcos sin hexágonos de ruido"
+                  style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.06em;
+                         padding:4px 10px;border:1px solid var(--border);border-radius:3px;
+                         background:var(--surface);color:var(--muted);cursor:pointer;
+                         transition:background 0.15s,color 0.15s">
+            SOLO ARCOS
+          </button>
+        </div>
         <div class="via-indicator" id="ruido-hour-badge" style="display:none">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:13px;height:13px;flex-shrink:0">
             <circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/>

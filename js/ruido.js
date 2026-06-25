@@ -18,8 +18,9 @@ let _ruidoLoading   = false;
 
 let _ruidoLayerGrp  = null;    // L.layerGroup con los hexágonos de la hora actual
 let _ruidoMap       = null;    // instancia Leaflet propia del sub-tab Ruido
-let _ruidoCurrentHour = null;  // última hora pintada (evita redibujar si no cambió)
-let _ruidoLastAnimHour = null; // última hora revelada en animación (evita redraw por frame)
+let _ruidoCurrentHour  = null;
+let _ruidoLastAnimHour = null;
+let _ruidoSoloArcos    = false;  // cuando true: solo arcos, sin hexágonos
 
 // Estado de animación propio (independiente de animState en animation.js)
 let ruidoAnimState = {
@@ -426,7 +427,7 @@ function ruidoSyncRoute(busId) {
   if (!_ruidoMap) return;   // sub-tab Ruido aún no se ha abierto — nada que hacer todavía
 
   // ── Limpieza completa de TODO lo relacionado a la ruta anterior ────────────
-  _ruidoAnimStop();   // para animación, limpia timer/raf, incrementa token
+  _ruidoAnimStop();
   ruidoAnimState.progress = 0;
   _ruidoAnimHoraIdx       = 0;
   if (ruidoAnimState.animLayer && _ruidoMap) { _ruidoMap.removeLayer(ruidoAnimState.animLayer); ruidoAnimState.animLayer = null; }
@@ -437,6 +438,18 @@ function ruidoSyncRoute(busId) {
   _ruidoLastAnimHour     = null;
   _ruidoHexEnVentana     = null;
   ruidoAnimState.targetId = null;
+
+  // Resetear modo solo arcos
+  if (_ruidoSoloArcos) {
+    _ruidoSoloArcos = false;
+    const btn = document.getElementById('ruido-solo-arcos-btn');
+    if (btn) {
+      btn.style.background  = 'var(--surface)';
+      btn.style.color       = 'var(--muted)';
+      btn.style.borderColor = 'var(--border)';
+      btn.textContent       = 'SOLO ARCOS';
+    }
+  }
 
   // Resetear controles de animación (botones, barra de progreso, badges)
   const _fill  = document.getElementById('ruido-anim-fill');
@@ -1089,7 +1102,36 @@ function _ruidoUpdateAnimSegments(entry, shown) {
   );
 }
 
-// ─── EXTRAER HORA DESDE coord_timestamps (formato "HH:MM") ───────────────────
+// ── Toggle: solo arcos / arcos + hexágonos ───────────────────────────────────
+function ruidoToggleSoloArcos() {
+  _ruidoSoloArcos = !_ruidoSoloArcos;
+
+  const btn = document.getElementById('ruido-solo-arcos-btn');
+  if (btn) {
+    btn.style.background = _ruidoSoloArcos ? 'var(--ink)' : 'var(--surface)';
+    btn.style.color      = _ruidoSoloArcos ? 'var(--bg)'  : 'var(--muted)';
+    btn.style.borderColor= _ruidoSoloArcos ? 'var(--ink)' : 'var(--border)';
+    btn.textContent      = _ruidoSoloArcos  ? 'ARCOS + RUIDO' : 'SOLO ARCOS';
+  }
+
+  if (_ruidoSoloArcos) {
+    // Quitar hexágonos activos
+    if (_ruidoLayerGrp && _ruidoMap) {
+      _ruidoMap.removeLayer(_ruidoLayerGrp);
+      _ruidoLayerGrp = null;
+    }
+    _ruidoCurrentHour = null;
+    const badge = document.getElementById('ruido-hour-badge');
+    if (badge) badge.style.display = 'none';
+  } else {
+    // Restaurar hexágonos de la hora actual
+    _ruidoCurrentHour = null;
+    const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
+    if (entry && _ruidoLoaded) _ruidoPaintForPoint(entry, 0);
+  }
+}
+
+ (formato "HH:MM") ───────────────────
 function _ruidoHourAtIndex(entry, idx) {
   const ts = entry.feature.properties.coord_timestamps;
   if (!Array.isArray(ts) || !ts[idx]) return null;
@@ -1105,6 +1147,7 @@ function _ruidoPaintForPoint(entry, pointIdx) {
 }
 
 function _ruidoPaintHour(hour) {
+  if (_ruidoSoloArcos) return;   // modo solo arcos: no pintar hexágonos
   if (hour === _ruidoCurrentHour) return;
   _ruidoCurrentHour = hour;
 
