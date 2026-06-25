@@ -1163,12 +1163,23 @@ function _ruidoPaintHour(hour) {
   const hexMapFull = _ruidoByHour.get(hour);
   _ruidoLayerGrp = L.layerGroup();
 
-  // Filtrar solo hexágonos dentro de la ventana de ESTA hora específica
-  // (los pings que realmente ocurrieron entre HH:00 y HH:59), no de toda la ruta.
-  const ventanaHora = _ruidoVentanaPorHora ? _ruidoVentanaPorHora.get(hour) : null;
-  const hexMap = ventanaHora
-    ? new Map([...hexMapFull].filter(([hexId]) => ventanaHora.has(hexId)))
-    : hexMapFull;
+  // Filtrar solo hexágonos dentro de la ventana de ESTA hora.
+  // Si la ventana aún no está calculada, intentar calcularla ahora.
+  // NUNCA pintar hexMapFull completo — son todos los de la RM sin filtrar.
+  if (!_ruidoVentanaPorHora) {
+    const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
+    if (entry) _ruidoComputarVentana(entry);
+  }
+
+  const ventanaHora = _ruidoVentanaPorHora?.get(hour);
+  if (!ventanaHora || ventanaHora.size === 0) {
+    // Ventana vacía o aún no disponible — no pintar nada para esta hora
+    _ruidoLayerGrp.addTo(_ruidoMap);
+    _ruidoUpdateHourBadge(hour, 0);
+    return;
+  }
+
+  const hexMap = new Map([...hexMapFull].filter(([hexId]) => ventanaHora.has(hexId)));
 
   hexMap.forEach((row, hexId) => {
     const latlngs = _ruidoH3ToLatLngs(hexId);
