@@ -206,8 +206,10 @@ let _redvialLoading   = false;
 
 // Map<owner_id_str, Map<hour_int, [{arc_id, regime, dLdk, length_m}]>>
 // Todas las horas de todos los arcos de cada vehículo
-let _rutaArcosData    = null;
-let _rutaArcosLoading = false;
+let _rutaArcosData       = null;
+let _rutaArcosLoading    = false;
+// Map<owner_id, Map<hour, Set<h3_index>>> — índice directo para ventana de hexágonos
+let _rutaArcosHexPorHora = null;
 
 let _criticosLayer    = null;   // L.layerGroup con arcos de la ruta activa
 
@@ -250,13 +252,16 @@ async function _ruidoLoadRutaArcos() {
     await new Promise(resolve => Papa.parse(csvText, {
       header: true, dynamicTyping: true, skipEmptyLines: true,
       complete({ data: rows }) {
-        _rutaArcosData = new Map();
+        _rutaArcosData       = new Map();
+        _rutaArcosHexPorHora = new Map();
+
         rows.forEach(r => {
           const oid   = String(r.owner_id ?? '').trim();
           const arcId = String(r.arc_id   ?? '').trim();
           const hour  = parseInt(r.hour, 10);
           if (!oid || !arcId || isNaN(hour)) return;
 
+          // ── Arcos por hora ────────────────────────────────────────────────
           if (!_rutaArcosData.has(oid)) _rutaArcosData.set(oid, new Map());
           const byHour = _rutaArcosData.get(oid);
           if (!byHour.has(hour)) byHour.set(hour, []);
@@ -266,6 +271,15 @@ async function _ruidoLoadRutaArcos() {
             dLdk:     r.dLdk != null && r.dLdk !== '' ? +r.dLdk : null,
             length_m: r.length_m != null ? +r.length_m : null,
           });
+
+          // ── h3_index por hora (para ventana de hexágonos) ─────────────────
+          const h3 = String(r.h3_index ?? '').trim();
+          if (h3) {
+            if (!_rutaArcosHexPorHora.has(oid)) _rutaArcosHexPorHora.set(oid, new Map());
+            const byHourHex = _rutaArcosHexPorHora.get(oid);
+            if (!byHourHex.has(hour)) byHourHex.set(hour, new Set());
+            byHourHex.get(hour).add(h3);
+          }
         });
         _rutaArcosLoading = false;
         const nVeh   = _rutaArcosData.size;
@@ -274,6 +288,15 @@ async function _ruidoLoadRutaArcos() {
         console.log(`[RutaArcos] ${nVeh} vehículos · ${nArcos} arcos-hora`);
         if (status) status.textContent =
           `✓ ${nVeh} vehículos · ${nArcos.toLocaleString()} arcos cargados`;
+
+        // Si ya hay una ruta activa, recomputar la ventana de hexágonos
+        if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoLoaded) {
+          const activeEntry = gpsLayers[ruidoAnimState.targetId];
+          _ruidoComputarVentana(activeEntry);
+          // Repintar la hora actual con la ventana correcta
+          _ruidoCurrentHour = null;
+          _ruidoPaintForPoint(activeEntry, 0);
+        }
         resolve();
       },
       error(err) {
@@ -564,102 +587,42 @@ function _ruidoAgruparPingsPorHora(entry) {
   return porHora;
 }
 
-// Precalcula, PARA CADA HORA del recorrido, el set de hexágonos dentro del
-// radio de 400m respecto a los CENTROIDES DE LOS ARCOS de esa hora
-// (desde ruta_arcos_por_vehiculo.csv + redvial_arcos.geojson).
-// Reemplaza el cálculo anterior basado en pings OSRM.
+// Precalcula, POR HORA, el set de h3_index directamente desde ruta_arcos_por_vehiculo.csv.
+// Cada fila del CSV ya tiene el h3_index del arco — son exactamente los hexágonos
+// a mostrar. No se necesita haversine ni _redvialIndex.
+// Si _rutaArcosData no está cargado aún, la ventana queda null y _ruidoPaintHour
+// no pintará nada (sin fallback a toda la RM).
 function _ruidoComputarVentana(entry) {
   _ruidoVentanaPorHora = null;
   _ruidoHexEnVentana   = null;
   if (!_ruidoLoaded || !entry) return;
 
-  const oid = String(entry.feature.properties.owner_id ?? '');
-
-  // Intentar usar arcos de RedVial si están disponibles
+  const oid    = String(entry.feature.properties.owner_id ?? '');
   const byHour = _rutaArcosData?.get(oid);
 
-  if (byHour && _redvialIndex) {
-    // ── Nuevo: centroides de arcos por hora ───────────────────────────────────
-    const todosHex = new Set();
-    _ruidoByHour.forEach(hexMap => hexMap.forEach((_, hexId) => todosHex.add(hexId)));
-
-    _ruidoVentanaPorHora = new Map();
-    let totalEnAlgunaHora = new Set();
-
-    byHour.forEach((arcos, hour) => {
-      // Calcular centroide de cada arco de esta hora
-      const centros = [];
-      arcos.forEach(({ arc_id }) => {
-        const feat = _redvialIndex.get(arc_id);
-        if (!feat) return;
-        const coords = feat.geometry?.coordinates;
-        if (!coords?.length) return;
-        // Centroide simple: media de todos los vértices del LineString
-        let sumLat = 0, sumLon = 0;
-        coords.forEach(([lon, lat]) => { sumLat += lat; sumLon += lon; });
-        centros.push([sumLat / coords.length, sumLon / coords.length]);
-      });
-
-      if (centros.length === 0) {
-        _ruidoVentanaPorHora.set(hour, new Set());
-        return;
-      }
-
-      const dentro = new Set();
-      todosHex.forEach(hexId => {
-        const centro = _ruidoHexCentro(hexId);
-        if (!centro) return;
-        const [hLat, hLon] = centro;
-        const cerca = centros.some(([lat, lon]) =>
-          _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
-        );
-        if (cerca) dentro.add(hexId);
-      });
-
-      _ruidoVentanaPorHora.set(hour, dentro);
-      dentro.forEach(h => totalEnAlgunaHora.add(h));
-    });
-
-    _ruidoHexEnVentana = totalEnAlgunaHora;
-
-  } else {
-    // ── Fallback: pings OSRM (si aún no cargaron los arcos) ──────────────────
-    const pingsPorHora = _ruidoAgruparPingsPorHora(entry);
-    if (pingsPorHora.size === 0) return;
-
-    const todosHex = new Set();
-    _ruidoByHour.forEach(hexMap => hexMap.forEach((_, hexId) => todosHex.add(hexId)));
-
-    _ruidoVentanaPorHora = new Map();
-    let totalEnAlgunaHora = new Set();
-
-    pingsPorHora.forEach((pingsHora, hour) => {
-      const step   = Math.max(1, Math.floor(pingsHora.length / 40));
-      const muestra = [];
-      for (let i = 0; i < pingsHora.length; i += step) muestra.push(pingsHora[i]);
-
-      const dentro = new Set();
-      todosHex.forEach(hexId => {
-        const centro = _ruidoHexCentro(hexId);
-        if (!centro) return;
-        const [hLat, hLon] = centro;
-        const cerca = muestra.some(([lat, lon]) =>
-          _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
-        );
-        if (cerca) dentro.add(hexId);
-      });
-
-      _ruidoVentanaPorHora.set(hour, dentro);
-      dentro.forEach(h => totalEnAlgunaHora.add(h));
-    });
-
-    _ruidoHexEnVentana = totalEnAlgunaHora;
+  if (!byHour || byHour.size === 0) {
+    // _rutaArcosData no cargado aún — dejar null, _ruidoPaintHour no pintará nada
+    return;
   }
+
+  // Para cada hora, recopilar los h3_index de los arcos de esa hora
+  // Necesitamos el h3_index por arco — está en _rutaArcosHexIndex
+  const hexPorHora = _rutaArcosHexPorHora?.get(oid);
+  if (!hexPorHora) return;
+
+  _ruidoVentanaPorHora = new Map();
+  const totalHex = new Set();
+
+  hexPorHora.forEach((hexSet, hour) => {
+    _ruidoVentanaPorHora.set(hour, hexSet);
+    hexSet.forEach(h => totalHex.add(h));
+  });
+
+  _ruidoHexEnVentana = totalHex;
 
   const badge = document.getElementById('ruido-window-badge');
   if (badge) {
-    const nHex = _ruidoHexEnVentana?.size ?? 0;
-    badge.textContent = `${_ruidoRadioKm * 1000}m · ${nHex.toLocaleString()} hexágonos`;
+    badge.textContent = `${totalHex.size.toLocaleString()} hexágonos`;
     badge.style.display = 'block';
   }
 }
@@ -966,16 +929,15 @@ function _ruidoCalcularEstadisticas(entry) {
 
   Array.from(horasRuta).sort((a, b) => a - b).forEach(hour => {
     const hexMapFull  = _ruidoByHour.get(hour);
-    // Si _ruidoVentanaPorHora existe y tiene datos para esta hora → filtrar
-    // Si no → usar TODOS los hexágonos de esta hora (fallback sin ventana)
     const ventanaHora = _ruidoVentanaPorHora?.get(hour);
-    const usarVentana = ventanaHora && ventanaHora.size > 0;
 
-    if (!hexMapFull) { porHora.push({ hour, avgDb: null, nHex: 0 }); return; }
+    if (!hexMapFull || !ventanaHora || ventanaHora.size === 0) {
+      porHora.push({ hour, avgDb: null, nHex: 0 }); return;
+    }
 
     const dbVals = [];
     hexMapFull.forEach((row, hexId) => {
-      if (!usarVentana || ventanaHora.has(hexId)) {
+      if (ventanaHora.has(hexId)) {
         const db = +row.L_rec_dB;
         if (!isNaN(db)) dbVals.push(db);
       }
