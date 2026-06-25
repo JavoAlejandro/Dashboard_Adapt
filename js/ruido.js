@@ -261,7 +261,6 @@ async function _ruidoLoadRutaArcos() {
           const hour  = parseInt(r.hour, 10);
           if (!oid || !arcId || isNaN(hour)) return;
 
-          // ── Arcos por hora ────────────────────────────────────────────────
           if (!_rutaArcosData.has(oid)) _rutaArcosData.set(oid, new Map());
           const byHour = _rutaArcosData.get(oid);
           if (!byHour.has(hour)) byHour.set(hour, []);
@@ -271,15 +270,6 @@ async function _ruidoLoadRutaArcos() {
             dLdk:     r.dLdk != null && r.dLdk !== '' ? +r.dLdk : null,
             length_m: r.length_m != null ? +r.length_m : null,
           });
-
-          // ── h3_index por hora (para ventana de hexágonos) ─────────────────
-          const h3 = String(r.h3_index ?? '').trim();
-          if (h3) {
-            if (!_rutaArcosHexPorHora.has(oid)) _rutaArcosHexPorHora.set(oid, new Map());
-            const byHourHex = _rutaArcosHexPorHora.get(oid);
-            if (!byHourHex.has(hour)) byHourHex.set(hour, new Set());
-            byHourHex.get(hour).add(h3);
-          }
         });
         _rutaArcosLoading = false;
         const nVeh   = _rutaArcosData.size;
@@ -289,13 +279,14 @@ async function _ruidoLoadRutaArcos() {
         if (status) status.textContent =
           `✓ ${nVeh} vehículos · ${nArcos.toLocaleString()} arcos cargados`;
 
-        // Si ya hay una ruta activa, recomputar la ventana de hexágonos
+        // Si ya hay una ruta activa, recomputar ventana cuando ambos datos estén listos
         if (ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId] && _ruidoLoaded) {
           const activeEntry = gpsLayers[ruidoAnimState.targetId];
-          _ruidoComputarVentana(activeEntry);
-          // Repintar la hora actual con la ventana correcta
-          _ruidoCurrentHour = null;
-          _ruidoPaintForPoint(activeEntry, 0);
+          _ruidoLoadRedvial().then(() => {
+            _ruidoComputarVentana(activeEntry);
+            _ruidoCurrentHour = null;
+            _ruidoPaintForPoint(activeEntry, 0);
+          });
         }
         resolve();
       },
@@ -520,15 +511,18 @@ function ruidoSyncRoute(busId) {
   const dia = p.dia ?? '';
   if (note) note.textContent = `Camión ${oid} · Día ${dia} · ${entry.coords.length} puntos`;
 
-  // Renderizar ambos paneles si los datos ya están cargados
+  // Renderizar paneles y calcular ventana — esperar arcos+redvial para hexágonos correctos
   if (_ruidoLoaded) {
-    _ruidoComputarVentana(entry);
     _ruidoRenderStatsPanel(entry);
-    _ruidoPaintForPoint(entry, 0);
+    // Cargar los dos archivos de arcos en paralelo, luego computar ventana
+    Promise.all([_ruidoLoadRutaArcos(), _ruidoLoadRedvial()]).then(() => {
+      _ruidoComputarVentana(entry);
+      _ruidoCurrentHour = null;
+      _ruidoPaintForPoint(entry, 0);
+    });
   }
   if (_camionLoaded) {
     _ruidoRenderVehiculoPanel(entry);
-    // Pintar todos los arcos de la ruta + resaltado de críticos
     const diag = _ruidoDiagnosticoVehiculo(entry);
     _ruidoPintarTodosArcos(entry, diag?.criticos || []);
   }
@@ -587,11 +581,10 @@ function _ruidoAgruparPingsPorHora(entry) {
   return porHora;
 }
 
-// Precalcula, POR HORA, el set de h3_index directamente desde ruta_arcos_por_vehiculo.csv.
-// Cada fila del CSV ya tiene el h3_index del arco — son exactamente los hexágonos
-// a mostrar. No se necesita haversine ni _redvialIndex.
-// Si _rutaArcosData no está cargado aún, la ventana queda null y _ruidoPaintHour
-// no pintará nada (sin fallback a toda la RM).
+// Precalcula, POR HORA, el set de hexágonos dentro de 400m de los centroides
+// de los arcos de esa hora. Usa _redvialIndex para obtener coordenadas de arcos.
+// Si algún índice no está listo, deja _ruidoVentanaPorHora = null
+// y _ruidoPaintHour no pintará nada (sin fallback a toda la RM).
 function _ruidoComputarVentana(entry) {
   _ruidoVentanaPorHora = null;
   _ruidoHexEnVentana   = null;
@@ -600,29 +593,54 @@ function _ruidoComputarVentana(entry) {
   const oid    = String(entry.feature.properties.owner_id ?? '');
   const byHour = _rutaArcosData?.get(oid);
 
-  if (!byHour || byHour.size === 0) {
-    // _rutaArcosData no cargado aún — dejar null, _ruidoPaintHour no pintará nada
+  if (!byHour || byHour.size === 0 || !_redvialIndex) {
+    // Datos no disponibles aún — no pintar nada
     return;
   }
 
-  // Para cada hora, recopilar los h3_index de los arcos de esa hora
-  // Necesitamos el h3_index por arco — está en _rutaArcosHexIndex
-  const hexPorHora = _rutaArcosHexPorHora?.get(oid);
-  if (!hexPorHora) return;
+  // Universo de hexágonos en el dataset de ruido
+  const todosHex = new Set();
+  _ruidoByHour.forEach(hexMap => hexMap.forEach((_, hexId) => todosHex.add(hexId)));
 
   _ruidoVentanaPorHora = new Map();
   const totalHex = new Set();
 
-  hexPorHora.forEach((hexSet, hour) => {
-    _ruidoVentanaPorHora.set(hour, hexSet);
-    hexSet.forEach(h => totalHex.add(h));
+  byHour.forEach((arcos, hour) => {
+    // Centroides de los arcos de esta hora
+    const centros = [];
+    arcos.forEach(({ arc_id }) => {
+      const feat   = _redvialIndex.get(arc_id);
+      const coords = feat?.geometry?.coordinates;
+      if (!coords?.length) return;
+      let sumLat = 0, sumLon = 0;
+      coords.forEach(([lon, lat]) => { sumLat += lat; sumLon += lon; });
+      centros.push([sumLat / coords.length, sumLon / coords.length]);
+    });
+
+    if (centros.length === 0) {
+      _ruidoVentanaPorHora.set(hour, new Set());
+      return;
+    }
+
+    const dentro = new Set();
+    todosHex.forEach(hexId => {
+      const centro = _ruidoHexCentro(hexId);
+      if (!centro) return;
+      const [hLat, hLon] = centro;
+      if (centros.some(([lat, lon]) =>
+        _ruidoHaversineKm(lat, lon, hLat, hLon) <= _ruidoRadioKm
+      )) dentro.add(hexId);
+    });
+
+    _ruidoVentanaPorHora.set(hour, dentro);
+    dentro.forEach(h => totalHex.add(h));
   });
 
   _ruidoHexEnVentana = totalHex;
 
   const badge = document.getElementById('ruido-window-badge');
   if (badge) {
-    badge.textContent = `${totalHex.size.toLocaleString()} hexágonos`;
+    badge.textContent  = `${totalHex.size.toLocaleString()} hexágonos · ${_ruidoRadioKm * 1000}m`;
     badge.style.display = 'block';
   }
 }
