@@ -1082,7 +1082,7 @@ select.pal-sel {
 }
 .kpi-gp {
   font-family: var(--mono, monospace);
-  font-size: 8px;
+  font-size: 10px;
   color: var(--muted, #79828D);
 }
 .ruido-inner-panel { display: block; }

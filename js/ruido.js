@@ -519,6 +519,8 @@ function ruidoSyncRoute(busId) {
       _ruidoComputarVentana(entry);
       _ruidoCurrentHour = null;
       _ruidoPaintForPoint(entry, 0);
+      // Re-renderizar panel Impacto con valores filtrados por ventana
+      _ruidoRenderStatsPanel(entry);
     });
   }
   if (_camionLoaded) {
@@ -949,13 +951,12 @@ function _ruidoCalcularEstadisticas(entry) {
     const hexMapFull  = _ruidoByHour.get(hour);
     const ventanaHora = _ruidoVentanaPorHora?.get(hour);
 
-    if (!hexMapFull || !ventanaHora || ventanaHora.size === 0) {
-      porHora.push({ hour, avgDb: null, nHex: 0 }); return;
-    }
+    if (!hexMapFull) { porHora.push({ hour, avgDb: null, nHex: 0 }); return; }
 
     const dbVals = [];
     hexMapFull.forEach((row, hexId) => {
-      if (ventanaHora.has(hexId)) {
+      // Si hay ventana calculada: filtrar. Si no: usar todos los hexágonos de la hora.
+      if (!ventanaHora || ventanaHora.has(hexId)) {
         const db = +row.L_rec_dB;
         if (!isNaN(db)) dbVals.push(db);
       }

@@ -1037,7 +1037,7 @@ function _kpiRenderGrid(containerId, accountId) {
     const delta  = row ? +row[key + '_delta']       : NaN;
 
     const valStr = isNaN(actual) ? '—' : _kpiFmt(actual);
-    const pctStr = pct != null   ? `pct ${(+pct).toFixed(1)}` : '—';
+    const pctStr = pct != null   ? `percentil  ${(+pct).toFixed(1)}` : '—';
     const deltaColor = (!isNaN(delta) && delta > 0) ? '#E03131'
                      : (!isNaN(delta) && delta < 0) ? '#2C9E5B' : '#79828D';
     const deltaSign  = (!isNaN(delta) && delta > 0) ? '+' : '';
