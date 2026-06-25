@@ -1131,7 +1131,7 @@ function ruidoToggleSoloArcos() {
   }
 }
 
- (formato "HH:MM") ───────────────────
+// ─── EXTRAER HORA DESDE coord_timestamps (formato "HH:MM") ───────────────────
 function _ruidoHourAtIndex(entry, idx) {
   const ts = entry.feature.properties.coord_timestamps;
   if (!Array.isArray(ts) || !ts[idx]) return null;
