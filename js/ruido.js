@@ -37,13 +37,12 @@ let ruidoAnimState = {
 let _ruidoMinDb = 40;
 let _ruidoMaxDb = 80;
 
-// ─── COLOR RAMP — escala de ruido, distinta a personas/hora y H3 impacto ──────
-// Verde (silencioso) → amarillo → naranja → rojo (ruidoso)
+// ─── COLOR RAMP HEXÁGONOS — púrpura/violeta (no solapa con arcos celeste/ámbar/gris)
 const RUIDO_RAMP = [
-  { t: 0.00, r: 56,  g: 161, b: 105 },  // verde — silencioso
-  { t: 0.40, r: 214, g: 197, b: 38  },  // amarillo
-  { t: 0.70, r: 230, g: 126, b: 34  },  // naranja
-  { t: 1.00, r: 197, g: 48,  b: 48  },  // rojo — ruidoso
+  { t: 0.00, r: 237, g: 233, b: 254 },  // lila muy claro — silencioso
+  { t: 0.35, r: 167, g: 139, b: 250 },  // violeta suave
+  { t: 0.65, r: 124, g: 58,  b: 237 },  // violeta intenso
+  { t: 1.00, r: 76,  g: 29,  b: 149 },  // púrpura oscuro — ruidoso
 ];
 
 function _ruidoColor(norm) {
@@ -397,6 +396,8 @@ async function _ruidoPintarTodosArcos(entry, criticos) {
       .reduce((b, l) => b.extend(l.getBounds?.() ?? b), L.latLngBounds([]));
     if (bounds.isValid()) _ruidoMap.fitBounds(bounds, { padding: [30, 30] });
   } catch {}
+
+  _ruidoUpdateLegend();   // actualizar leyenda (muestra régimen siempre)
 }
 
 // ── Actualizar arcos durante la animación (hasta hora `hour`) ─────────────────
@@ -1355,41 +1356,45 @@ function _ruidoUpdateLegend() {
     leg = document.createElement('div');
     leg.id = 'ruido-legend';
     leg.style.cssText = [
-      'position:absolute','bottom:80px','left:12px','z-index:500',
+      'position:absolute','bottom:44px','left:12px','z-index:500',
       'background:var(--surface)','border:1px solid var(--border)',
       'border-radius:4px','padding:8px 12px',
       'font-family:Syne Mono,monospace','font-size:9px',
-      'color:var(--muted)','min-width:140px','pointer-events:none',
+      'color:var(--muted)','min-width:148px','pointer-events:none',
     ].join(';');
     document.getElementById('map-ruido')?.appendChild(leg);
   }
 
-  // Leyenda de hexágonos (ruido ambiente)
   const gradStops = RUIDO_RAMP
     .map(s => `rgb(${s.r},${s.g},${s.b}) ${(s.t * 100).toFixed(0)}%`)
     .join(',');
 
-  // Leyenda de segmentos dLdk (si el GeoJSON los trae)
-  const entry = ruidoAnimState.targetId && gpsLayers[ruidoAnimState.targetId];
-  const dldkStops = DLDK_RAMP
-    .map(s => `rgb(${s.r},${s.g},${s.b}) ${(s.t * 100).toFixed(0)}%`)
-    .join(',');
-  const dldkLeg = _ruidoHasArcos(entry) ? `
-    <div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--border)">
-      <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">Segmentos · dLdk</div>
-      <div style="height:5px;border-radius:2px;background:linear-gradient(to right,${dldkStops});margin-bottom:4px"></div>
-      <div style="display:flex;justify-content:space-between">
-        <span>reduce</span><span>neutro</span><span>aporta</span>
-      </div>
-    </div>` : '';
-
   leg.innerHTML = `
-    <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">Nivel de ruido</div>
-    <div style="height:8px;border-radius:2px;background:linear-gradient(to right,${gradStops});margin-bottom:4px"></div>
-    <div style="display:flex;justify-content:space-between">
+    <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px">
+      Hexágonos · nivel de ruido
+    </div>
+    <div style="height:7px;border-radius:2px;
+                background:linear-gradient(to right,${gradStops});margin-bottom:4px"></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:10px">
       <span>${_ruidoMinDb.toFixed(0)} dB</span><span>${_ruidoMaxDb.toFixed(0)} dB</span>
     </div>
-    ${dldkLeg}`;
+
+    <div style="letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px;
+                padding-top:7px;border-top:1px solid var(--border)">
+      Arcos · régimen de tráfico
+    </div>
+    ${[
+      { color: REGIME_COLOR.sensitive,  label: 'Sensitive',  sub: 'free-flow'   },
+      { color: REGIME_COLOR.transition, label: 'Transition', sub: 'flujo mixto' },
+      { color: REGIME_COLOR.saturated,  label: 'Saturated',  sub: 'congestión'  },
+      { color: REGIME_COLOR.none,       label: 'Sin régimen', sub: ''            },
+    ].map(({ color, label, sub }) => `
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="width:28px;height:4px;border-radius:2px;
+                     background:${color};flex-shrink:0;display:inline-block"></span>
+        <span style="color:var(--ink)">${label}</span>
+        ${sub ? `<span style="color:var(--muted);font-size:8px">· ${sub}</span>` : ''}
+      </div>`).join('')}`;
 }
 
 // ─── ENTRADA AL SUB-TAB RUIDO (llamado desde switchSubTab) ───────────────────
