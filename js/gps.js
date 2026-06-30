@@ -7,6 +7,7 @@ function fmtN(v) { return v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(1
 let gpsData   = null;   // raw GeoJSON FeatureCollection
 let gpsMap    = null;
 let gpsLayers = {};     // bus_id → L.polyline
+let canvasRenderer = null;   // L.canvas() compartido por todas las rutas — usado por _buildRouteLine
 
 // ── IMPACT HEATMAP HELPERS ────────────────────────────────────────────────
 // Approach: ONE L.polyline per route (no memory explosion).
@@ -246,7 +247,7 @@ const BSP_SEG_KEYS   = ['gse_ab_personas','gse_c1a_personas','gse_c2_personas','
 const BSP_KEYS_GSE  = BSP_SEG_KEYS.slice(0, 6);   // indices 0–5
 const BSP_KEYS_EDAD = BSP_SEG_KEYS.slice(6);       // indices 6–11
 
-function setTotals(vals, horas, tiempoDetencion, tiempoMov, tiempoOperacion) {
+function setTotals(vals, horas, tiempoDetencion, tiempoMov) {
   if (!vals) {
     document.getElementById('bsp-totals').style.display = 'none';
     return;
@@ -271,12 +272,9 @@ function setTotals(vals, horas, tiempoDetencion, tiempoMov, tiempoOperacion) {
         : '';
       const tiempoLine = (detencionStr || movStr)
         ? `<br>${detencionStr}${movStr}` : '';
-      const operacionStr = tiempoOperacion != null
-        ? ` <span style="color:var(--ink2)">(${fmtH(tiempoOperacion)}h operación)</span>`
-        : '';
       subEl.innerHTML =
         `<span style="font-family:'Syne Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.08em;line-height:1.8">
-          ${fmtV(totalEdad)} personas · ${fmtH(horas)}h registrado${operacionStr}${tiempoLine}
+          ${fmtV(totalEdad)} personas · ${fmtH(horas)}h operación${tiempoLine}
         </span>`;
     }
   } else {
@@ -352,31 +350,18 @@ function showGroupStats() {
   });
   const maxVal = Math.max(...vals);
 
-  // T Registrado (hora_inicio → hora_fin) y T Operación (hora_salida → hora_fin)
-  // promediados entre las rutas visibles del grupo.
-  const tiempoRegDurations = visibleIds.map(id => {
+  // Horas operación: desde hora_salida (o hora_inicio) hasta hora_fin
+  const horasDurations = visibleIds.map(id => {
     const p = gpsLayers[id] && gpsLayers[id].feature.properties;
     if (!p) return null;
-    const ini = p.hora_inicio != null ? parseFloat(p.hora_inicio) : null;
-    const fin = p.hora_fin    != null ? parseFloat(p.hora_fin)    : null;
+    const ini = p.hora_salida != null ? parseFloat(p.hora_salida)
+              : p.hora_inicio != null ? parseFloat(p.hora_inicio) : null;
+    const fin = p.hora_fin != null ? parseFloat(p.hora_fin) : null;
     return (ini != null && fin != null && fin >= ini) ? fin - ini : null;
   }).filter(v => v != null);
-  const tiempoRegAvg = tiempoRegDurations.length > 0
-    ? tiempoRegDurations.reduce((a, b) => a + b, 0) / tiempoRegDurations.length
+  const horasAvg = horasDurations.length > 0
+    ? horasDurations.reduce((a, b) => a + b, 0) / horasDurations.length
     : null;
-
-  const tiempoOperacionDurations = visibleIds.map(id => {
-    const p = gpsLayers[id] && gpsLayers[id].feature.properties;
-    if (!p) return null;
-    const ini = p.hora_salida != null ? parseFloat(p.hora_salida) : null;
-    const fin = p.hora_fin    != null ? parseFloat(p.hora_fin)    : null;
-    return (ini != null && fin != null && fin >= ini) ? fin - ini : null;
-  }).filter(v => v != null);
-  const tiempoOperacionAvg = tiempoOperacionDurations.length > 0
-    ? tiempoOperacionDurations.reduce((a, b) => a + b, 0) / tiempoOperacionDurations.length
-    : null;
-
-  const horasAvg = tiempoRegAvg;   // alias para el resto del bloque (per-hora, etc.)
 
   // Tiempos de detención (stays) promedio entre rutas visibles
   const detencionAvg = (() => {
@@ -399,7 +384,7 @@ function showGroupStats() {
   document.getElementById('bsp-title').textContent = `Grupo${empLbl}${busLbl}${mesLbl}${diaLbl}`;
   document.getElementById('bsp-sub').textContent   =
     `PROMEDIO DE ${rows.length} BUS${rows.length > 1 ? 'ES' : ''} · ${visibleIds.length - rows.length > 0 ? `(${visibleIds.length - rows.length} sin datos CSV)` : 'TODOS CON DATOS'}`;
-  setTotals(vals, horasAvg, detencionAvg, horasAvg != null ? Math.max(0, horasAvg - detencionAvg) : null, tiempoOperacionAvg);
+  setTotals(vals, horasAvg, detencionAvg, horasAvg != null ? Math.max(0, horasAvg - detencionAvg) : null);
 
   // Side cards with GSE/edad separator
   const cards = document.getElementById('bsp-cards');
@@ -564,47 +549,19 @@ function showBusStats(busId, mesOverride) {
   const vals   = BSP_SEG_KEYS.map(k => row[k] || 0);
   const maxVal = Math.max(...vals);
 
-  // T Registrado: hora_inicio (primer ping GPS) → hora_fin (último ping).
-  // Es la ventana completa en que el camión estuvo siendo trackeado —
-  // incluye cualquier detención (stay) que haya ocurrido dentro de esa ventana.
-  const horaInicio    = p.hora_inicio != null ? parseFloat(p.hora_inicio) : null;
-  const horaFinOp     = p.hora_fin    != null ? parseFloat(p.hora_fin)    : null;
-  const tiempoReg = (horaInicio != null && horaFinOp != null && horaFinOp >= horaInicio)
-    ? horaFinOp - horaInicio : null;
-
-  // T Operación: hora_salida (salida "oficial" de ruta) → hora_fin.
-  // Suele ser un sub-intervalo de T Registrado (hora_salida ≥ hora_inicio).
-  const horaSalidaOp  = p.hora_salida != null ? parseFloat(p.hora_salida) : null;
-  const tiempoOperacion = (horaSalidaOp != null && horaFinOp != null && horaFinOp >= horaSalidaOp)
-    ? horaFinOp - horaSalidaOp : null;
-
-  // Mantener `horas` como alias de tiempoReg para el resto del código
-  // (per-hora de personas, etc. se sigue calculando sobre la ventana completa).
-  const horas = tiempoReg;
+  // Horas operación: hora_salida (o hora_inicio) → hora_fin (último ping)
+  const horaInicioOp = p.hora_salida != null ? parseFloat(p.hora_salida)
+                     : p.hora_inicio != null  ? parseFloat(p.hora_inicio) : null;
+  const horaFinOp    = p.hora_fin != null ? parseFloat(p.hora_fin) : null;
+  const horas = (horaInicioOp != null && horaFinOp != null && horaFinOp >= horaInicioOp)
+    ? horaFinOp - horaInicioOp : null;
 
   // Tiempos de detención: suma de duración de stays (en horas)
-  const staysArr        = Array.isArray(p.stays) ? p.stays : [];
-  const tiempoDetencion = staysArr.reduce((s, st) => s + ((st.duration_minutes || 0) / 60), 0);
+  const staysArr      = Array.isArray(p.stays) ? p.stays : [];
+  const tiempoDetencion  = staysArr.reduce((s, st) => s + ((st.duration_minutes || 0) / 60), 0);
+  const tiempoMov     = horas != null ? Math.max(0, horas - tiempoDetencion) : null;
 
-  // Tiempo de movilidad = T Registrado − T Detención
-  const tiempoMov = tiempoReg != null ? Math.max(0, tiempoReg - tiempoDetencion) : null;
-
-  // Validación: la detención no puede superar el tiempo registrado completo.
-  if (tiempoReg != null && tiempoDetencion > tiempoReg + 0.01) {
-    console.warn(
-      `[ruido-detencion] Inconsistencia en Camión ${objId} · Día ${dia}: ` +
-      `tiempo de detención (${tiempoDetencion.toFixed(1)}h) supera el tiempo registrado (${tiempoReg.toFixed(1)}h). ` +
-      `Posibles causas: stays de un día anterior/posterior incluidos en el archivo, o error de cálculo.`,
-      { stays: staysArr, horaInicio, horaSalidaOp, horaFinOp, tiempoReg, tiempoOperacion, tiempoDetencion }
-    );
-    if (typeof showNotif === 'function') {
-      showNotif('error', '⚠',
-        `<b>Camión ${objId} · Día ${dia}</b>: tiempo de detención (${tiempoDetencion.toFixed(1)}h) ` +
-        `mayor al tiempo registrado (${tiempoReg.toFixed(1)}h) — revisar datos de stays`);
-    }
-  }
-
-  setTotals(vals, horas, tiempoDetencion, tiempoMov, tiempoOperacion);
+  setTotals(vals, horas, tiempoDetencion, tiempoMov);
 
   // Compact side cards — one row per segment with GSE/edad separator
   const cards = document.getElementById('bsp-cards');
@@ -1126,6 +1083,104 @@ function loadGeoJSON(ev) {
   reader.readAsText(file);
 }
 
+// ── Construye la polyline de una ruta + sus listeners de hover ──────────────
+// Extraída como función reutilizable: initGPSMap() la llama al construir
+// todas las rutas, y animFrame()/animReset() la llaman para RECONSTRUIR
+// desde cero el layer del camión animado al terminar — en vez de intentar
+// reciclar el layer original (removeLayer/addTo + redraw no garantiza que
+// el hit-test del canvas renderer compartido vuelva a registrar el hover).
+// Reemplaza entry.layer por la nueva instancia y la añade al mapa.
+function _buildRouteLine(id, entry) {
+  const p      = entry.feature.properties;
+  const coords = entry.coords;
+
+  const line = L.polyline(coords, {
+    color: entry.color, weight: 2.5, opacity: 0.75,
+    smoothFactor: 1.5, renderer: canvasRenderer,
+    pane: 'routesPane',
+  });
+  line.addTo(gpsMap);
+
+  // Hover: mostrar hora del ping más cercano al cursor
+  const coordTs = p.coord_timestamps;
+  if (coordTs && Array.isArray(coordTs) && coordTs.length > 0) {
+    line.on('mousemove', function(e) {
+      const tip    = _getOrCreatePingTooltip();
+      const latLng = e.latlng;
+
+      // Find closest coordinate to cursor
+      let bestDist = Infinity, bestIdx = 0;
+      entry.coords.forEach((c, i) => {
+        const d = gpsMap.distance(latLng, L.latLng(c[0], c[1]));
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      });
+      const hora = coordTs[bestIdx] || '—';
+
+      // Build combined tooltip: camion ID + hora del ping
+      const pid   = p.owner_id || p.bus_id || id;
+      const pSal  = p.hora_salida != null ? formatHora(p.hora_salida) : null;
+      const nPings = (p.n_pings_original || '?').toLocaleString();
+      tip.innerHTML =
+        `<span style="font-weight:700;font-size:12px">Camión ${pid}</span>` +
+        (pSal ? `<span style="color:rgba(255,255,255,0.6);margin-left:8px">${pSal}</span>` : '') +
+        `<br><span style="font-size:14px;font-weight:800">${hora}</span>` +
+        `<span style="color:rgba(255,255,255,0.5);font-size:9px;margin-left:6px">${nPings} pings</span>`;
+      // Check if near a stay marker — append stay info if so
+      let stayInfo = '';
+      if (currentStays && currentStays.length > 0) {
+        let bestStayDist = 60, bestStay = null;  // 60m threshold
+        currentStays.forEach(s => {
+          const d = gpsMap.distance(latLng, L.latLng(parseFloat(s.lat), parseFloat(s.lon)));
+          if (d < bestStayDist) { bestStayDist = d; bestStay = s; }
+        });
+        if (bestStay) {
+          const dur  = bestStay.duration_minutes ? parseFloat(bestStay.duration_minutes).toFixed(1) : '?';
+          const time = bestStay.start_time ? String(bestStay.start_time).slice(11, 16) : '?';
+          stayInfo = `<br><span style="color:#f59e0b;font-size:10px">⏱ Stay ${time} · ${dur} min</span>`;
+        }
+      }
+      tip.innerHTML =
+        `<span style="font-weight:700;font-size:12px">Camión ${pid}</span>` +
+        (pSal ? `<span style="color:rgba(255,255,255,0.6);margin-left:8px">${pSal}</span>` : '') +
+        `<br><span style="font-size:14px;font-weight:800">${hora}</span>` +
+        `<span style="color:rgba(255,255,255,0.5);font-size:9px;margin-left:6px">${nPings} pings</span>` +
+        stayInfo;
+      const pt = gpsMap.latLngToContainerPoint(latLng);
+      tip.style.display = 'block';
+      tip.style.left    = (pt.x + 16) + 'px';
+      tip.style.top     = (pt.y - 36) + 'px';
+    });
+    line.on('mouseout', () => {
+      const tip = document.getElementById('ping-tooltip');
+      if (tip) tip.style.display = 'none';
+    });
+  } else {
+    // No coord_timestamps: still show camion info on hover (without hora)
+    line.on('mousemove', function(e) {
+      const tip   = _getOrCreatePingTooltip();
+      const pid   = p.owner_id || p.bus_id || id;
+      const pSal  = p.hora_salida != null ? formatHora(p.hora_salida) : null;
+      const pFin  = p.hora_fin   != null ? formatHora(p.hora_fin)    : null;
+      const nPings = (p.n_pings_original || '?').toLocaleString();
+      tip.innerHTML =
+        `<span style="font-weight:700;font-size:12px">Camión ${pid}</span>` +
+        (pSal ? `<span style="color:rgba(255,255,255,0.6);margin-left:8px">${pSal}${pFin ? ' – ' + pFin : ''}</span>` : '') +
+        `<br><span style="color:rgba(255,255,255,0.5);font-size:9px">${nPings} pings</span>`;
+      const pt = gpsMap.latLngToContainerPoint(e.latlng);
+      tip.style.display = 'block';
+      tip.style.left    = (pt.x + 16) + 'px';
+      tip.style.top     = (pt.y - 36) + 'px';
+    });
+    line.on('mouseout', () => {
+      const tip = document.getElementById('ping-tooltip');
+      if (tip) tip.style.display = 'none';
+    });
+  }
+
+  entry.layer = line;
+  return line;
+}
+
 function initGPSMap() {
   const features = gpsData.features;
 
@@ -1172,7 +1227,7 @@ function initGPSMap() {
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     subdomains:'abcd', maxZoom:19
   }).addTo(gpsMap);
-  const canvasRenderer = L.canvas({ padding: 0.5 });
+  canvasRenderer = L.canvas({ padding: 0.5 });   // global — reutilizado por _buildRouteLine
 
   // Wire coord picker
   gpsMap.on('click', onMapClick);
@@ -1338,92 +1393,11 @@ function initGPSMap() {
 
       // Always a single polyline — impact coloring painted separately on canvas overlay
       _ensureStaysPane();  // ensure panes exist
-      const line = L.polyline(coords, {
-        color: entry.color, weight: 2.5, opacity: 0.75,
-        smoothFactor: 1.5, renderer: canvasRenderer,
-        pane: 'routesPane',
-      });
-      // No Leaflet tooltip — info shown via custom hover tooltip below
-      line.addTo(gpsMap);
+
+      _buildRouteLine(id, entry);
 
       // Store pre-computed impact data (plain objects, no Leaflet layers)
       entry.impactData = parseImpactData(p);  // null if no vias_con_indices
-
-      // Hover: mostrar hora del ping más cercano al cursor
-      const coordTs = p.coord_timestamps;
-      if (coordTs && Array.isArray(coordTs) && coordTs.length > 0) {
-        line.on('mousemove', function(e) {
-          const tip    = _getOrCreatePingTooltip();
-          const latLng = e.latlng;
-
-          // Find closest coordinate to cursor
-          let bestDist = Infinity, bestIdx = 0;
-          entry.coords.forEach((c, i) => {
-            const d = gpsMap.distance(latLng, L.latLng(c[0], c[1]));
-            if (d < bestDist) { bestDist = d; bestIdx = i; }
-          });
-          const hora = coordTs[bestIdx] || '—';
-
-          // Build combined tooltip: camion ID + hora del ping
-          const pid   = p.owner_id || p.bus_id || id;
-          const pSal  = p.hora_salida != null ? formatHora(p.hora_salida) : null;
-          const nPings = (p.n_pings_original || '?').toLocaleString();
-          tip.innerHTML =
-            `<span style="font-weight:700;font-size:12px">Camión ${pid}</span>` +
-            (pSal ? `<span style="color:rgba(255,255,255,0.6);margin-left:8px">${pSal}</span>` : '') +
-            `<br><span style="font-size:14px;font-weight:800">${hora}</span>` +
-            `<span style="color:rgba(255,255,255,0.5);font-size:9px;margin-left:6px">${nPings} pings</span>`;
-          // Check if near a stay marker — append stay info if so
-          let stayInfo = '';
-          if (currentStays && currentStays.length > 0) {
-            let bestStayDist = 60, bestStay = null;  // 60m threshold
-            currentStays.forEach(s => {
-              const d = gpsMap.distance(latLng, L.latLng(parseFloat(s.lat), parseFloat(s.lon)));
-              if (d < bestStayDist) { bestStayDist = d; bestStay = s; }
-            });
-            if (bestStay) {
-              const dur  = bestStay.duration_minutes ? parseFloat(bestStay.duration_minutes).toFixed(1) : '?';
-              const time = bestStay.start_time ? String(bestStay.start_time).slice(11, 16) : '?';
-              stayInfo = `<br><span style="color:#f59e0b;font-size:10px">⏱ Stay ${time} · ${dur} min</span>`;
-            }
-          }
-          tip.innerHTML =
-            `<span style="font-weight:700;font-size:12px">Camión ${pid}</span>` +
-            (pSal ? `<span style="color:rgba(255,255,255,0.6);margin-left:8px">${pSal}</span>` : '') +
-            `<br><span style="font-size:14px;font-weight:800">${hora}</span>` +
-            `<span style="color:rgba(255,255,255,0.5);font-size:9px;margin-left:6px">${nPings} pings</span>` +
-            stayInfo;
-          const pt = gpsMap.latLngToContainerPoint(latLng);
-          tip.style.display = 'block';
-          tip.style.left    = (pt.x + 16) + 'px';
-          tip.style.top     = (pt.y - 36) + 'px';
-        });
-        line.on('mouseout', () => {
-          const tip = document.getElementById('ping-tooltip');
-          if (tip) tip.style.display = 'none';
-        });
-      } else {
-        // No coord_timestamps: still show camion info on hover (without hora)
-        line.on('mousemove', function(e) {
-          const tip   = _getOrCreatePingTooltip();
-          const pid   = p.owner_id || p.bus_id || id;
-          const pSal  = p.hora_salida != null ? formatHora(p.hora_salida) : null;
-          const pFin  = p.hora_fin   != null ? formatHora(p.hora_fin)    : null;
-          const nPings = (p.n_pings_original || '?').toLocaleString();
-          tip.innerHTML =
-            `<span style="font-weight:700;font-size:12px">Camión ${pid}</span>` +
-            (pSal ? `<span style="color:rgba(255,255,255,0.6);margin-left:8px">${pSal}${pFin ? ' – ' + pFin : ''}</span>` : '') +
-            `<br><span style="color:rgba(255,255,255,0.5);font-size:9px">${nPings} pings</span>`;
-          const pt = gpsMap.latLngToContainerPoint(e.latlng);
-          tip.style.display = 'block';
-          tip.style.left    = (pt.x + 16) + 'px';
-          tip.style.top     = (pt.y - 36) + 'px';
-        });
-        line.on('mouseout', () => {
-          const tip = document.getElementById('ping-tooltip');
-          if (tip) tip.style.display = 'none';
-        });
-      }
 
       // Start/end markers created but NOT added to map — only shown when camion is selected
       const mkIcon = (cls) => {
@@ -1440,9 +1414,9 @@ function initGPSMap() {
       startMarker.bindTooltip(`⚫ Inicio${p.hora_salida != null ? ' · ' + formatHora(p.hora_salida) : ''}`, { className:'leaflet-tip', direction:'top' });
       endMarker.bindTooltip('⚪ Fin', { className:'leaflet-tip', direction:'top' });
 
-      entry.layer = line; entry.startMarker = startMarker; entry.endMarker = endMarker;
+      entry.startMarker = startMarker; entry.endMarker = endMarker;
       entry._built = true; entry._markersOnMap = false;
-      try { allBounds.push(line.getBounds()); } catch {}
+      try { allBounds.push(entry.layer.getBounds()); } catch {}
     }
     batchIdx = end;
 
@@ -2072,14 +2046,6 @@ function applyFilters() {
   } else if (!anyActive) {
     document.getElementById('gps-side-stats').style.display  = 'none';
     { const _el = document.getElementById('bus-stats-panel'); if (_el) _el.style.display = 'none'; }
-  }
-
-  // Ruido no depende de Mes/Día: si Exposición no encontró un singleId estricto
-  // (varias rutas del mismo camión sin filtrar día/mes) pero sí hay un bus
-  // específico seleccionado, sincronizar Ruido con su propia resolución relajada.
-  if (!singleId && fv.bus !== 'all' && typeof _ruidoResolveSingleId === 'function') {
-    const ruidoId = _ruidoResolveSingleId();
-    if (ruidoId && typeof ruidoSyncRoute === 'function') ruidoSyncRoute(ruidoId);
   }
   // Update dynamic stat cells to reflect current visible set
   updateStatsCells();

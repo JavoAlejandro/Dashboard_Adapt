@@ -123,15 +123,11 @@ function animFrame(ts) {
     document.getElementById('anim-note').textContent = '✓ Recorrido completo';
     animHideVia();
     const e = gpsLayers[animState.targetId];
-    if (e && e.visible) {
-      // El layer fue removido del mapa (no solo ocultado) — volver a añadirlo
-      // re-registra correctamente el hit-test del canvas renderer compartido.
-      try { e.layer.addTo(gpsMap); } catch {}
-      // redraw() explícito: fuerza a Leaflet a repintar el canvas de hit-test,
-      // evitando que quede desincronizado tras los muchos setStyle de la animación.
-      if (typeof e.layer.redraw === 'function') {
-        try { e.layer.redraw(); } catch {}
-      }
+    if (e && e.visible && typeof _buildRouteLine === 'function') {
+      // Reconstruir el layer desde cero (no reciclar el removido): un layer
+      // nuevo garantiza que el canvas renderer compartido registre el hit-test
+      // de hover correctamente. removeLayer/addTo del mismo objeto no lo hacía.
+      _buildRouteLine(animState.targetId, e);
     }
     if (animState.animLayer) { gpsMap.removeLayer(animState.animLayer); animState.animLayer = null; }
     if (animState.animDot)   { gpsMap.removeLayer(animState.animDot);   animState.animDot   = null; }
@@ -147,16 +143,12 @@ function animReset() {
   if (animState.rafId) cancelAnimationFrame(animState.rafId);
   if (animState.animLayer && gpsMap) { gpsMap.removeLayer(animState.animLayer); animState.animLayer = null; }
   if (animState.animDot   && gpsMap) { gpsMap.removeLayer(animState.animDot);   animState.animDot   = null; }
-  // Restaurar el layer: fue removido del mapa (no solo ocultado) al iniciar
-  // la animación. addTo() + redraw() re-sincroniza el hit-test del canvas
-  // renderer compartido, corrigiendo el hover roto tras animar.
+  // Reconstruir el layer desde cero si fue removido durante la animación —
+  // garantiza que el hover quede funcionando (ver nota en animFrame).
   if (animState.targetId && gpsLayers[animState.targetId]) {
     const entry = gpsLayers[animState.targetId];
-    if (entry.visible) {
-      try { entry.layer.addTo(gpsMap); } catch {}
-      if (typeof entry.layer.redraw === 'function') {
-        try { entry.layer.redraw(); } catch {}
-      }
+    if (entry.visible && gpsMap && !gpsMap.hasLayer(entry.layer) && typeof _buildRouteLine === 'function') {
+      _buildRouteLine(animState.targetId, entry);
     }
   }
   // Guard all DOM — animReset() can be called before map UI renders
