@@ -53,10 +53,12 @@ function animPlay() {
   document.getElementById('anim-icon-play').style.display  = 'none';
   document.getElementById('anim-icon-pause').style.display = '';
 
-  // Ocultar la ruta completa con opacity 0 (preserva event listeners y tooltips)
-  // NO usar removeLayer — destruye los handlers de hover/tooltip en L.geoJSON
+  // Quitar la ruta del mapa mientras se anima. A diferencia de capas con
+  // tooltips bind-eados (L.geoJSON), aquí los hovers son listeners .on()
+  // añadidos directamente sobre la polyline — sobreviven a removeLayer/addTo
+  // porque viven en el objeto JS de Leaflet, no en el DOM del mapa.
   const entry = gpsLayers[targetId];
-  entry.layer.setStyle({ opacity: 0, fillOpacity: 0 });
+  try { gpsMap.removeLayer(entry.layer); } catch {}
 
   if (!animState.animLayer) {
     animState.animLayer = L.polyline([], {
@@ -122,8 +124,14 @@ function animFrame(ts) {
     animHideVia();
     const e = gpsLayers[animState.targetId];
     if (e && e.visible) {
-      // Restaurar opacidad — NO usar addTo (ya está en el mapa, solo invisible)
-      e.layer.setStyle({ opacity: 1, fillOpacity: 0.6 });
+      // El layer fue removido del mapa (no solo ocultado) — volver a añadirlo
+      // re-registra correctamente el hit-test del canvas renderer compartido.
+      try { e.layer.addTo(gpsMap); } catch {}
+      // redraw() explícito: fuerza a Leaflet a repintar el canvas de hit-test,
+      // evitando que quede desincronizado tras los muchos setStyle de la animación.
+      if (typeof e.layer.redraw === 'function') {
+        try { e.layer.redraw(); } catch {}
+      }
     }
     if (animState.animLayer) { gpsMap.removeLayer(animState.animLayer); animState.animLayer = null; }
     if (animState.animDot)   { gpsMap.removeLayer(animState.animDot);   animState.animDot   = null; }
@@ -139,10 +147,17 @@ function animReset() {
   if (animState.rafId) cancelAnimationFrame(animState.rafId);
   if (animState.animLayer && gpsMap) { gpsMap.removeLayer(animState.animLayer); animState.animLayer = null; }
   if (animState.animDot   && gpsMap) { gpsMap.removeLayer(animState.animDot);   animState.animDot   = null; }
-  // Restaurar visibilidad del layer — estaba hidden con opacity:0, NO removido
+  // Restaurar el layer: fue removido del mapa (no solo ocultado) al iniciar
+  // la animación. addTo() + redraw() re-sincroniza el hit-test del canvas
+  // renderer compartido, corrigiendo el hover roto tras animar.
   if (animState.targetId && gpsLayers[animState.targetId]) {
     const entry = gpsLayers[animState.targetId];
-    if (entry.visible) entry.layer.setStyle({ opacity: 1, fillOpacity: 0.6 });
+    if (entry.visible) {
+      try { entry.layer.addTo(gpsMap); } catch {}
+      if (typeof entry.layer.redraw === 'function') {
+        try { entry.layer.redraw(); } catch {}
+      }
+    }
   }
   // Guard all DOM — animReset() can be called before map UI renders
   const _fill  = document.getElementById('anim-fill');
