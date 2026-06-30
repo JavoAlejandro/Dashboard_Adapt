@@ -19,6 +19,13 @@ function switchSubTab(name, btn) {
     }, 80);
   }
 
+  // Mes/Día del gps-topbar no aplican a los datos de ruido (ruta_arcos_por_vehiculo.csv
+  // y hexagonos_hora no se filtran por dia/mes) — ocultarlos solo en este sub-tab.
+  ['gps-mes-lbl', 'gps-mes-sel', 'gps-dia-lbl', 'gps-dia-sel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = (name === 'ruido') ? 'none' : '';
+  });
+
   // Entrando al sub-tab Ruido: inicializar mapa propio + cargar CSV (lazy) +
   // sincronizar con el camión actualmente seleccionado en Exposición
   if (name === 'ruido' && typeof ruidoOnTabEnter === 'function') {
