@@ -549,18 +549,49 @@ function showBusStats(busId, mesOverride) {
   const vals   = BSP_SEG_KEYS.map(k => row[k] || 0);
   const maxVal = Math.max(...vals);
 
+<<<<<<< HEAD
   // Horas operación: hora_salida (o hora_inicio) → hora_fin (último ping)
   const horaInicioOp = p.hora_salida != null ? parseFloat(p.hora_salida)
                      : p.hora_inicio != null  ? parseFloat(p.hora_inicio) : null;
+=======
+  // Horas operación: hora_inicio (primer ping GPS real) → hora_fin (último ping)
+  // Antes priorizaba hora_salida, pero esa marca la salida "oficial" del camión,
+  // no el primer ping registrado — hora_inicio es más temprana y más precisa.
+  const horaInicioOp = p.hora_inicio != null ? parseFloat(p.hora_inicio)
+                     : p.hora_salida != null  ? parseFloat(p.hora_salida) : null;
+>>>>>>> parent of a6d8f88 (Tiempos)
   const horaFinOp    = p.hora_fin != null ? parseFloat(p.hora_fin) : null;
   const horas = (horaInicioOp != null && horaFinOp != null && horaFinOp >= horaInicioOp)
     ? horaFinOp - horaInicioOp : null;
 
   // Tiempos de detención: suma de duración de stays (en horas)
+<<<<<<< HEAD
   const staysArr      = Array.isArray(p.stays) ? p.stays : [];
   const tiempoDetencion  = staysArr.reduce((s, st) => s + ((st.duration_minutes || 0) / 60), 0);
   const tiempoMov     = horas != null ? Math.max(0, horas - tiempoDetencion) : null;
 
+=======
+  const staysArr        = Array.isArray(p.stays) ? p.stays : [];
+  const tiempoDetencion = staysArr.reduce((s, st) => s + ((st.duration_minutes || 0) / 60), 0);
+  const tiempoMov       = horas != null ? Math.max(0, horas - tiempoDetencion) : null;
+
+  // Validación: el tiempo de operación debe ser siempre ≥ que la suma de detenciones.
+  // Si no se cumple, algo está mal en los datos (stays de otro día, cálculo erróneo).
+  if (horas != null && tiempoDetencion > horas + 0.01) {
+    console.warn(
+      `[ruido-detencion] Inconsistencia en Camión ${objId} · Día ${dia}: ` +
+      `tiempo de detención (${tiempoDetencion.toFixed(1)}h) supera el tiempo de operación (${horas.toFixed(1)}h). ` +
+      `Posibles causas: stays de un día anterior/posterior incluidos en el archivo, o error de cálculo.`,
+      { stays: staysArr, horaInicioOp, horaFinOp, horas, tiempoDetencion }
+    );
+    if (typeof showNotif === 'function') {
+      showNotif('error', '⚠',
+        `<b>Camión ${objId} · Día ${dia}</b>: tiempo de detención (${tiempoDetencion.toFixed(1)}h) ` +
+        `mayor al tiempo de operación (${horas.toFixed(1)}h) — revisar datos de stays`);
+    }
+  }
+
+>>>>>>> parent of a6d8f88 (Tiempos)
   setTotals(vals, horas, tiempoDetencion, tiempoMov);
 
   // Compact side cards — one row per segment with GSE/edad separator
