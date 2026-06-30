@@ -123,11 +123,22 @@ function animFrame(ts) {
     document.getElementById('anim-note').textContent = '✓ Recorrido completo';
     animHideVia();
     const e = gpsLayers[animState.targetId];
+    console.log('[anim-debug] animFrame end:', { targetId: animState.targetId, visible: e && e.visible, hasBuildFn: typeof _buildRouteLine === 'function', hasLayerOnMap: e && gpsMap.hasLayer(e.layer) });
     if (e && e.visible && typeof _buildRouteLine === 'function') {
       // Reconstruir el layer desde cero (no reciclar el removido): un layer
       // nuevo garantiza que el canvas renderer compartido registre el hit-test
       // de hover correctamente. removeLayer/addTo del mismo objeto no lo hacía.
       _buildRouteLine(animState.targetId, e);
+      console.log('[anim-debug] _buildRouteLine called, new layer on map:', gpsMap.hasLayer(e.layer));
+      // Forzar al canvas renderer compartido a reconstruir su mapa de
+      // hit-detection completo — un solo addTo() aislado puede no disparar
+      // el repintado del hit-canvas si Leaflet optimiza con dirty-rect.
+      setTimeout(() => {
+        if (gpsMap && canvasRenderer && typeof canvasRenderer._update === 'function') {
+          try { canvasRenderer._update(); } catch (err) { console.warn('[anim-debug] _update failed', err); }
+        }
+        if (gpsMap) gpsMap.invalidateSize({ pan: false });
+      }, 30);
     }
     if (animState.animLayer) { gpsMap.removeLayer(animState.animLayer); animState.animLayer = null; }
     if (animState.animDot)   { gpsMap.removeLayer(animState.animDot);   animState.animDot   = null; }
