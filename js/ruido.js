@@ -1391,6 +1391,13 @@ function _ruidoUpdateLegend() {
 
 // ─── ENTRADA AL SUB-TAB RUIDO (llamado desde switchSubTab) ───────────────────
 async function ruidoOnTabEnter() {
+  // Defensivo: switchSubTab() en init.js ya oculta Mes/Día antes de llamar
+  // esta función. Se repite aquí por si se invoca directo (ej. desde consola).
+  ['gps-mes-lbl', 'gps-mes-sel', 'gps-dia-lbl', 'gps-dia-sel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+
   ruidoInitMap();
   setTimeout(() => _ruidoMap && _ruidoMap.invalidateSize(), 80);
 
@@ -1440,12 +1447,24 @@ async function ruidoOnTabEnter() {
 
 // Replica la resolución de "singleId" de applyFilters() en gps.js, para que
 // Ruido siempre muestre exactamente la misma ruta que está activa en Exposición.
+//
+// A diferencia de applyFilters() (que exige candidates.length === 1 porque ahí
+// SÍ importa distinguir el día/mes exacto), aquí basta con Empresa + Camión:
+// los datos de ruido (ruta_arcos_por_vehiculo.csv, hexagonos_hora) no dependen
+// del día ni del mes, así que si un mismo owner_id tiene varias rutas (varios
+// días), se toma la primera como representativa sin pedir más filtros.
 function _ruidoResolveSingleId() {
   if (typeof _getFilterVals !== 'function' || typeof _entryMatches !== 'function') return null;
   const fv = _getFilterVals();
   if (fv.bus === 'all') return null;   // sin camión específico → sin ruta única
-  const candidates = Object.entries(gpsLayers).filter(([, e]) => _entryMatches(e, fv));
-  return candidates.length === 1 ? candidates[0][0] : null;
+
+  // Ignorar mes/dia en el matching — solo empresa + bus determinan la ruta a mostrar
+  const fvRuido = { ...fv, mes: 'all', dia: 'all' };
+  const candidates = Object.entries(gpsLayers).filter(([, e]) => _entryMatches(e, fvRuido));
+  if (candidates.length === 0) return null;
+
+  // Si hay varias rutas para el mismo camión (distintos días), tomar la primera
+  return candidates[0][0];
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

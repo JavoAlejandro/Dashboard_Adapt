@@ -2029,6 +2029,14 @@ function applyFilters() {
     document.getElementById('gps-side-stats').style.display  = 'none';
     { const _el = document.getElementById('bus-stats-panel'); if (_el) _el.style.display = 'none'; }
   }
+
+  // Ruido no depende de Mes/Día: si Exposición no encontró un singleId estricto
+  // (varias rutas del mismo camión sin filtrar día/mes) pero sí hay un bus
+  // específico seleccionado, sincronizar Ruido con su propia resolución relajada.
+  if (!singleId && fv.bus !== 'all' && typeof _ruidoResolveSingleId === 'function') {
+    const ruidoId = _ruidoResolveSingleId();
+    if (ruidoId && typeof ruidoSyncRoute === 'function') ruidoSyncRoute(ruidoId);
+  }
   // Update dynamic stat cells to reflect current visible set
   updateStatsCells();
   // Redraw impact canvas after visibility change
