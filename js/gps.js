@@ -247,7 +247,7 @@ const BSP_SEG_KEYS   = ['gse_ab_personas','gse_c1a_personas','gse_c2_personas','
 const BSP_KEYS_GSE  = BSP_SEG_KEYS.slice(0, 6);   // indices 0–5
 const BSP_KEYS_EDAD = BSP_SEG_KEYS.slice(6);       // indices 6–11
 
-function setTotals(vals, horas, tiempoDetencion, tiempoMov) {
+function setTotals(vals, horas, tiempoDetencion, tiempoMov, tiempoOperacion) {
   if (!vals) {
     document.getElementById('bsp-totals').style.display = 'none';
     return;
@@ -272,9 +272,12 @@ function setTotals(vals, horas, tiempoDetencion, tiempoMov) {
         : '';
       const tiempoLine = (detencionStr || movStr)
         ? `<br>${detencionStr}${movStr}` : '';
+      const operacionStr = tiempoOperacion != null
+        ? ` <span style="color:var(--ink2)">(${fmtH(tiempoOperacion)}h operación)</span>`
+        : '';
       subEl.innerHTML =
         `<span style="font-family:'Syne Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:0.08em;line-height:1.8">
-          ${fmtV(totalEdad)} personas · ${fmtH(horas)}h operación${tiempoLine}
+          ${fmtV(totalEdad)} personas · ${fmtH(horas)}h registrado${operacionStr}${tiempoLine}
         </span>`;
     }
   } else {
@@ -350,18 +353,31 @@ function showGroupStats() {
   });
   const maxVal = Math.max(...vals);
 
-  // Horas operación: desde hora_salida (o hora_inicio) hasta hora_fin
-  const horasDurations = visibleIds.map(id => {
+  // T Registrado (hora_inicio → hora_fin) y T Operación (hora_salida → hora_fin)
+  // promediados entre las rutas visibles del grupo.
+  const tiempoRegDurations = visibleIds.map(id => {
     const p = gpsLayers[id] && gpsLayers[id].feature.properties;
     if (!p) return null;
-    const ini = p.hora_salida != null ? parseFloat(p.hora_salida)
-              : p.hora_inicio != null ? parseFloat(p.hora_inicio) : null;
-    const fin = p.hora_fin != null ? parseFloat(p.hora_fin) : null;
+    const ini = p.hora_inicio != null ? parseFloat(p.hora_inicio) : null;
+    const fin = p.hora_fin    != null ? parseFloat(p.hora_fin)    : null;
     return (ini != null && fin != null && fin >= ini) ? fin - ini : null;
   }).filter(v => v != null);
-  const horasAvg = horasDurations.length > 0
-    ? horasDurations.reduce((a, b) => a + b, 0) / horasDurations.length
+  const tiempoRegAvg = tiempoRegDurations.length > 0
+    ? tiempoRegDurations.reduce((a, b) => a + b, 0) / tiempoRegDurations.length
     : null;
+
+  const tiempoOperacionDurations = visibleIds.map(id => {
+    const p = gpsLayers[id] && gpsLayers[id].feature.properties;
+    if (!p) return null;
+    const ini = p.hora_salida != null ? parseFloat(p.hora_salida) : null;
+    const fin = p.hora_fin    != null ? parseFloat(p.hora_fin)    : null;
+    return (ini != null && fin != null && fin >= ini) ? fin - ini : null;
+  }).filter(v => v != null);
+  const tiempoOperacionAvg = tiempoOperacionDurations.length > 0
+    ? tiempoOperacionDurations.reduce((a, b) => a + b, 0) / tiempoOperacionDurations.length
+    : null;
+
+  const horasAvg = tiempoRegAvg;   // alias para el resto del bloque
 
   // Tiempos de detención (stays) promedio entre rutas visibles
   const detencionAvg = (() => {
@@ -384,7 +400,7 @@ function showGroupStats() {
   document.getElementById('bsp-title').textContent = `Grupo${empLbl}${busLbl}${mesLbl}${diaLbl}`;
   document.getElementById('bsp-sub').textContent   =
     `PROMEDIO DE ${rows.length} BUS${rows.length > 1 ? 'ES' : ''} · ${visibleIds.length - rows.length > 0 ? `(${visibleIds.length - rows.length} sin datos CSV)` : 'TODOS CON DATOS'}`;
-  setTotals(vals, horasAvg, detencionAvg, horasAvg != null ? Math.max(0, horasAvg - detencionAvg) : null);
+  setTotals(vals, horasAvg, detencionAvg, horasAvg != null ? Math.max(0, horasAvg - detencionAvg) : null, tiempoOperacionAvg);
 
   // Side cards with GSE/edad separator
   const cards = document.getElementById('bsp-cards');
@@ -549,50 +565,49 @@ function showBusStats(busId, mesOverride) {
   const vals   = BSP_SEG_KEYS.map(k => row[k] || 0);
   const maxVal = Math.max(...vals);
 
-<<<<<<< HEAD
-  // Horas operación: hora_salida (o hora_inicio) → hora_fin (último ping)
-  const horaInicioOp = p.hora_salida != null ? parseFloat(p.hora_salida)
-                     : p.hora_inicio != null  ? parseFloat(p.hora_inicio) : null;
-=======
-  // Horas operación: hora_inicio (primer ping GPS real) → hora_fin (último ping)
-  // Antes priorizaba hora_salida, pero esa marca la salida "oficial" del camión,
-  // no el primer ping registrado — hora_inicio es más temprana y más precisa.
-  const horaInicioOp = p.hora_inicio != null ? parseFloat(p.hora_inicio)
-                     : p.hora_salida != null  ? parseFloat(p.hora_salida) : null;
->>>>>>> parent of a6d8f88 (Tiempos)
-  const horaFinOp    = p.hora_fin != null ? parseFloat(p.hora_fin) : null;
-  const horas = (horaInicioOp != null && horaFinOp != null && horaFinOp >= horaInicioOp)
-    ? horaFinOp - horaInicioOp : null;
+  // T Registrado: hora_inicio (primer ping GPS) → hora_fin (último ping).
+  // Es la ventana completa en que el camión estuvo siendo trackeado —
+  // incluye cualquier detención (stay) que haya ocurrido dentro de esa ventana.
+  const horaInicio    = p.hora_inicio != null ? parseFloat(p.hora_inicio) : null;
+  const horaFinOp     = p.hora_fin    != null ? parseFloat(p.hora_fin)    : null;
+  const tiempoReg = (horaInicio != null && horaFinOp != null && horaFinOp >= horaInicio)
+    ? horaFinOp - horaInicio : null;
+
+  // T Operación: hora_salida (salida "oficial" de ruta) → hora_fin.
+  // Suele ser un sub-intervalo de T Registrado (hora_salida ≥ hora_inicio).
+  const horaSalidaOp  = p.hora_salida != null ? parseFloat(p.hora_salida) : null;
+  const tiempoOperacion = (horaSalidaOp != null && horaFinOp != null && horaFinOp >= horaSalidaOp)
+    ? horaFinOp - horaSalidaOp : null;
+
+  // Alias para el resto del bloque (per-hora de personas, etc. se calcula
+  // sobre la ventana completa T Registrado).
+  const horas = tiempoReg;
 
   // Tiempos de detención: suma de duración de stays (en horas)
-<<<<<<< HEAD
-  const staysArr      = Array.isArray(p.stays) ? p.stays : [];
-  const tiempoDetencion  = staysArr.reduce((s, st) => s + ((st.duration_minutes || 0) / 60), 0);
-  const tiempoMov     = horas != null ? Math.max(0, horas - tiempoDetencion) : null;
-
-=======
   const staysArr        = Array.isArray(p.stays) ? p.stays : [];
   const tiempoDetencion = staysArr.reduce((s, st) => s + ((st.duration_minutes || 0) / 60), 0);
-  const tiempoMov       = horas != null ? Math.max(0, horas - tiempoDetencion) : null;
 
-  // Validación: el tiempo de operación debe ser siempre ≥ que la suma de detenciones.
-  // Si no se cumple, algo está mal en los datos (stays de otro día, cálculo erróneo).
-  if (horas != null && tiempoDetencion > horas + 0.01) {
+  // Tiempo de movilidad = T Registrado − T Detención
+  const tiempoMov = tiempoReg != null ? Math.max(0, tiempoReg - tiempoDetencion) : null;
+
+  // Validación: la detención no puede superar T Registrado (la ventana completa).
+  // Comparar contra T Operación sería incorrecto: hora_salida puede ser
+  // posterior a un stay que ya estaba ocurriendo al primer ping.
+  if (tiempoReg != null && tiempoDetencion > tiempoReg + 0.01) {
     console.warn(
       `[ruido-detencion] Inconsistencia en Camión ${objId} · Día ${dia}: ` +
-      `tiempo de detención (${tiempoDetencion.toFixed(1)}h) supera el tiempo de operación (${horas.toFixed(1)}h). ` +
+      `tiempo de detención (${tiempoDetencion.toFixed(1)}h) supera el tiempo registrado (${tiempoReg.toFixed(1)}h). ` +
       `Posibles causas: stays de un día anterior/posterior incluidos en el archivo, o error de cálculo.`,
-      { stays: staysArr, horaInicioOp, horaFinOp, horas, tiempoDetencion }
+      { stays: staysArr, horaInicio, horaSalidaOp, horaFinOp, tiempoReg, tiempoOperacion, tiempoDetencion }
     );
     if (typeof showNotif === 'function') {
       showNotif('error', '⚠',
         `<b>Camión ${objId} · Día ${dia}</b>: tiempo de detención (${tiempoDetencion.toFixed(1)}h) ` +
-        `mayor al tiempo de operación (${horas.toFixed(1)}h) — revisar datos de stays`);
+        `mayor al tiempo registrado (${tiempoReg.toFixed(1)}h) — revisar datos de stays`);
     }
   }
 
->>>>>>> parent of a6d8f88 (Tiempos)
-  setTotals(vals, horas, tiempoDetencion, tiempoMov);
+  setTotals(vals, horas, tiempoDetencion, tiempoMov, tiempoOperacion);
 
   // Compact side cards — one row per segment with GSE/edad separator
   const cards = document.getElementById('bsp-cards');
