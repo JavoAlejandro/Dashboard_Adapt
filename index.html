@@ -774,6 +774,25 @@
         <div id="temp-tabla" style="overflow-x:auto"></div>
       </div>
 
+      <!-- Comparación de periodos (solo empresa única) -->
+      <div class="temp-chart-card" id="temp-periodo-card" style="margin-top:16px;display:none">
+        <div class="temp-chart-header">
+          <span class="temp-chart-title">Comparación de periodos</span>
+          <span class="temp-chart-sub">Mes A vs Mes B para la empresa seleccionada</span>
+        </div>
+        <div class="gps-filters" style="margin-top:4px">
+          <span class="ctrl-lbl">Periodo A</span>
+          <select class="gps-select" id="temp-periodo-a" onchange="tempPeriodoCmpChanged()">
+            <option value="">—</option>
+          </select>
+          <span class="ctrl-lbl">Periodo B</span>
+          <select class="gps-select" id="temp-periodo-b" onchange="tempPeriodoCmpChanged()">
+            <option value="">—</option>
+          </select>
+        </div>
+        <div id="temp-periodo-cmp" style="overflow-x:auto;margin-top:12px"></div>
+      </div>
+
     </div>
   </div>
   </div>

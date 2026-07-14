@@ -145,6 +145,7 @@ function tempApplyFilters() {
   _renderDiaSemChart(filtered, metrica);
   _renderHoraChart(filtered, metrica);
   _renderTabla(filtered, metrica);
+  _tempPeriodoPopulate(empresa);
 }
 
 // ── KPIs ─────────────────────────────────────────────────────────────────────
@@ -470,6 +471,160 @@ function _renderTabla(rows, metrica) {
       <td class="td-num">${horasProm.toFixed(1)}h</td>
     </tr>`;
   });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ── PERIODO A vs B COMPARISON (Work Unit D, PC-1/PC-2/PC-3) ─────────────────
+// Same-company self-comparison across two `mes` values. Visible only when a
+// single company is selected (empresa !== 'all' — PC-1 "Comparison hidden for
+// all companies"). Works with zero dependency on _flotaEmp (PC-2 "Comparison
+// works when reference data is absent") — valor is always computed inline
+// from _tempData using the same v > 0 filtered mean as _avgBy; when _flotaEmp
+// has a matching entry it is used instead (and unlocks the percentil column),
+// per design.md's exact fallback contract.
+
+// Reads metric key/label pairs straight from the live #temp-metrica-sel DOM
+// options rather than a hardcoded duplicate list, so this can never drift
+// from the 14 identifiers actually offered elsewhere in the sub-tab.
+function _tempMetricasList() {
+  const sel = document.getElementById('temp-metrica-sel');
+  if (!sel) return [];
+  return [...sel.options].map(o => ({ key: o.value, label: o.textContent }));
+}
+
+function _tempPeriodoRows(empresa) {
+  if (empresa === 'all') return [];
+  return _tempData.filter(r => String(r.account_id ?? r.owner_id) === empresa);
+}
+
+// Populates #temp-periodo-a/#temp-periodo-b from the distinct mes values
+// present for the selected company, toggles the card's visibility, and
+// triggers a repaint of the comparison table (so the card stays in sync
+// whenever tempApplyFilters() runs — company switch, filter change, or a
+// late temporalLoadFlota() resolution per design.md's Data Flow diagram).
+function _tempPeriodoPopulate(empresa) {
+  const card = document.getElementById('temp-periodo-card');
+  const selA = document.getElementById('temp-periodo-a');
+  const selB = document.getElementById('temp-periodo-b');
+  if (!card || !selA || !selB) return;
+
+  if (empresa === 'all') {
+    card.style.display = 'none';
+    selA.innerHTML = '<option value="">—</option>';
+    selB.innerHTML = '<option value="">—</option>';
+    const out = document.getElementById('temp-periodo-cmp');
+    if (out) out.innerHTML = '';
+    return;
+  }
+
+  card.style.display = 'block';
+
+  const rows  = _tempPeriodoRows(empresa);
+  const meses = [...new Set(rows.map(r => +r.mes))].filter(m => !isNaN(m)).sort((a,b) => a-b);
+
+  const prevA = selA.value, prevB = selB.value;
+  const optsHtml = '<option value="">—</option>' +
+    meses.map(m => `<option value="${m}">${MESES_LBL[m] || m}</option>`).join('');
+  selA.innerHTML = optsHtml;
+  selB.innerHTML = optsHtml;
+  if (meses.includes(+prevA)) selA.value = prevA;
+  if (meses.includes(+prevB)) selB.value = prevB;
+
+  tempPeriodoCmpChanged();
+}
+
+// onchange handler for both period selects. Deliberately not gated behind
+// the full tempApplyFilters() — this raw-_tempData comparison doesn't need
+// metrica/dim filter state, only the currently-selected company (design.md
+// Period-A-vs-B Comparison UI section).
+function tempPeriodoCmpChanged() {
+  const empresa = document.getElementById('temp-empresa-sel').value;
+  _renderPeriodoCmp(_tempPeriodoRows(empresa), empresa);
+}
+
+function _renderPeriodoCmp(rows, empresa) {
+  const container = document.getElementById('temp-periodo-cmp');
+  if (!container) return;
+
+  if (empresa === 'all') { container.innerHTML = ''; return; }
+
+  const selA = document.getElementById('temp-periodo-a');
+  const selB = document.getElementById('temp-periodo-b');
+  const mesA = selA && selA.value !== '' ? +selA.value : null;
+  const mesB = selB && selB.value !== '' ? +selB.value : null;
+
+  if (mesA == null || mesB == null) {
+    container.innerHTML = '<p style="font-size:11px;color:var(--muted);padding:8px 0">Selecciona Periodo A y Periodo B para comparar.</p>';
+    return;
+  }
+
+  const metricas = _tempMetricasList();
+  const rowsA = rows.filter(r => +r.mes === mesA);
+  const rowsB = rows.filter(r => +r.mes === mesB);
+
+  // Same v > 0 filtered mean as _avgBy, computed inline so this works with
+  // zero dependency on _flotaEmp (PC-2 "Comparison works when reference data
+  // is absent").
+  const valorFallback = (rs, metrica) => {
+    const vals = rs.map(r => +r[metrica]).filter(v => !isNaN(v) && v > 0);
+    return vals.length ? vals.reduce((a,b) => a+b, 0) / vals.length : 0;
+  };
+
+  const fmtN   = v => Math.abs(v) >= 1000 ? (v/1000).toFixed(1) + 'k' : v.toFixed(1);
+  const pctStr = p => (p == null || isNaN(p)) ? '—' : (+p).toFixed(1);
+
+  let html = `<table class="temp-table">
+    <thead><tr>
+      <th>Métrica</th>
+      <th>Mes A (${MESES_LBL[mesA] || mesA})</th>
+      <th>Pctl A</th>
+      <th>Mes B (${MESES_LBL[mesB] || mesB})</th>
+      <th>Pctl B</th>
+      <th>Δ valor</th>
+    </tr></thead><tbody>`;
+
+  metricas.forEach(({ key, label }) => {
+    // _flotaEmp when populated (Work Unit B); otherwise fall back to the
+    // inline raw-average computation. Same function handles both scenarios
+    // so they can never drift apart (D2 requirement).
+    const flotaA = _flotaEmp.get(`${empresa}|${mesA}|${key}`);
+    const flotaB = _flotaEmp.get(`${empresa}|${mesB}|${key}`);
+
+    const valorA = flotaA ? flotaA.valor : valorFallback(rowsA, key);
+    const valorB = flotaB ? flotaB.valor : valorFallback(rowsB, key);
+    const pctA   = flotaA ? flotaA.percentil : null;
+    const pctB   = flotaB ? flotaB.percentil : null;
+
+    const delta = valorB - valorA;
+
+    // Impact-polarity styling (resolved 2026-07-14, spec PC-3): higher p/h
+    // is worse (increase → red/"neg"), lower is better (decrease →
+    // green/"pos"), uniform across all 14 metrics. Δ === 0 → neutral,
+    // no directional arrow (covers "same period selected twice" and any
+    // other zero-delta row).
+    let deltaCls, deltaTxt;
+    if (delta === 0) {
+      deltaCls = 'neu';
+      deltaTxt = fmtN(0);
+    } else if (delta > 0) {
+      deltaCls = 'neg'; // increase = worse outcome
+      deltaTxt = '↑ +' + fmtN(delta);
+    } else {
+      deltaCls = 'pos'; // decrease = better outcome
+      deltaTxt = '↓ ' + fmtN(delta); // fmtN keeps the sign for negatives
+    }
+
+    html += `<tr>
+      <td>${label}</td>
+      <td class="td-num">${fmtN(valorA)}</td>
+      <td class="td-num">${pctStr(pctA)}</td>
+      <td class="td-num">${fmtN(valorB)}</td>
+      <td class="td-num">${pctStr(pctB)}</td>
+      <td class="td-num"><span class="cmp-delta ${deltaCls}" style="display:inline-block">${deltaTxt}</span></td>
+    </tr>`;
+  });
+
   html += '</tbody></table>';
   container.innerHTML = html;
 }

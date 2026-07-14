@@ -251,7 +251,7 @@ only depends on the frozen schema, not the generated data.
 
 ## Work Unit D — Period-A-vs-B comparison UI (`js/temporal.js` + `index.html`)
 
-### D1. Add `#temp-periodo-a` / `#temp-periodo-b` selectors + comparison card markup in `index.html`
+### D1. Add `#temp-periodo-a` / `#temp-periodo-b` selectors + comparison card markup in `index.html` [x]
 - Add a new `temp-periodo-card` block inside `#temp-content`, after the tabla card
   (`index.html` around line 774-776, i.e. right after `</div>` closing `#temp-tabla`'s
   parent `.temp-chart-card` and before the closing `</div>` of `#temp-content`).
@@ -265,7 +265,7 @@ only depends on the frozen schema, not the generated data.
 - Parallel: yes (markup-only, can be authored alongside C1 in a different file with no
   conflict).
 
-### D2. Implement `_renderPeriodoCmp` + selector population in `js/temporal.js`
+### D2. Implement `_renderPeriodoCmp` + selector population in `js/temporal.js` [x]
 - New function, populate `#temp-periodo-a`/`#temp-periodo-b` `<option>`s from the
   distinct `mes` values present in `_tempData` for the currently selected company
   (labels via existing `MESES_LBL`) — called whenever `tempApplyFilters()` runs and
@@ -299,7 +299,7 @@ only depends on the frozen schema, not the generated data.
 - Parallel: no (single function, sequential authoring recommended to keep the
   raw-path and percentile-path consistent in one pass).
 
-### D3. Wire `_renderPeriodoCmp` into the filter/re-render flow
+### D3. Wire `_renderPeriodoCmp` into the filter/re-render flow [x]
 - Call the selector-population step from `tempApplyFilters()` (so switching company
   refreshes available months) and call the actual comparison render whenever both
   selects have values, on their own `onchange` (not gated behind the full
@@ -313,7 +313,7 @@ only depends on the frozen schema, not the generated data.
 - Depends on: D2.
 - Parallel: no.
 
-### D4. Manual verification — period comparison
+### D4. Manual verification — period comparison [x] (code-trace verified; fallback raw-average path is the one genuinely exercisable today, see note)
 - Single company, pick Mes A + Mes B → table shows all 14 metrics, correct deltas,
   red-on-increase/green-on-decrease consistently (`design.md` Testing Strategy #5).
 - `empresa=all` → card hidden (`design.md` Testing Strategy #6, `PC-1` scenario).
@@ -326,6 +326,36 @@ only depends on the frozen schema, not the generated data.
 - Spec link: `PC-1`, `PC-2`, `PC-3` scenarios; `design.md` Testing Strategy #5, #6.
 - Depends on: D3.
 - Parallel: no.
+- **Verification note (2026-07-14)**: `node --check` passes on both touched files
+  (`js/temporal.js`, and `index.html` has no JS to check but was hand-traced for
+  DOM id consistency: `#temp-periodo-card`, `#temp-periodo-a`, `#temp-periodo-b`,
+  `#temp-periodo-cmp` all match between the markup and the JS lookups). Since
+  `_flotaEmp` is empty in the current real environment (same state as Work Units
+  B/C — `flota/*.csv` not yet uploaded to R2), the fallback path is what would
+  actually run live today: `_renderPeriodoCmp` looks up `_flotaEmp.get(...)`,
+  gets `undefined` for every key, and falls through to `valorFallback(rowsA/B,
+  key)` (the same `v > 0`-filtered inline mean as `_avgBy`) for `valor`, with
+  `pctStr(null)` rendering `—` for `percentil` — this path was traced
+  line-by-line and additionally exercised with a standalone Node script
+  reproducing `fmtN`/polarity logic (see below), not run in an actual browser
+  DOM this session (no valid bearer token available, consistent with B3/C2's
+  same limitation). Polarity worked example confirmed via Node:
+  `valorA=100, valorB=150 → delta=+50 → deltaCls='neg'` (renders via the
+  reused `.cmp-delta.neg` CSS rule at `css/styles.css:906`, `color:#b33a3a`
+  red); `valorA=150, valorB=100 → delta=-50 → deltaCls='pos'` (`.cmp-delta.pos`,
+  `css/styles.css:905`, `color:#2d7a4f` green); `valorA=valorB → delta=0 →
+  deltaCls='neu'`, no arrow, per `PC-3`'s "same period selected twice" scenario.
+  Visibility gating traced: `_tempPeriodoPopulate('all')` sets
+  `#temp-periodo-card` to `display:none` and clears both selects + the results
+  container; any non-`'all'` `empresa` sets `display:block` and repopulates the
+  selects from that company's distinct `mes` values. This D4 gate is called
+  from the tail of `tempApplyFilters()`, so it re-runs on every company/filter
+  change and on `temporalLoadFlota()`'s late resolution (via `tempApplyFilters()`
+  re-invocation when `_tempData.length`), satisfying D3's repaint requirement
+  without a separate hook. The `_flotaEmp`-populated path (percentile columns
+  actually showing numeric values instead of `—`) remains genuinely untested —
+  same category of outstanding verification as B3/C2 — and requires the user to
+  upload `flota/percentiles_empresa.csv` to R2 first.
 
 ---
 
