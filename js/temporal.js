@@ -107,10 +107,13 @@ function temporalIngest(rows) {
     id, color: TOKENS.companySeriesColors[i % TOKENS.companySeriesColors.length],
   }));
 
-  // Populate empresa selector
+  // Populate empresa selector. No "all companies" option (removed 2026-07-14,
+  // user-requested) — Temporal always operates on exactly one selected
+  // company, so the first company alphabetically becomes the default via the
+  // browser's normal <select> auto-select-first-option behavior.
   const sel = document.getElementById('temp-empresa-sel');
   if (sel) {
-    sel.innerHTML = '<option value="all">Todas las empresas</option>';
+    sel.innerHTML = '';
     emps.forEach(id => {
       const o = document.createElement('option');
       o.value = id; o.textContent = id; sel.appendChild(o);
@@ -131,9 +134,9 @@ function tempApplyFilters() {
   const metrica  = document.getElementById('temp-metrica-sel').value;
   const dim      = document.getElementById('temp-dim-sel').value;
 
-  const filtered = empresa === 'all'
-    ? _tempData
-    : _tempData.filter(r => String(r.account_id ?? r.owner_id) === empresa);
+  // No "all companies" option anymore (removed 2026-07-14) — empresa always
+  // resolves to exactly one selected company.
+  const filtered = _tempData.filter(r => String(r.account_id ?? r.owner_id) === empresa);
 
   if (!filtered.length) return;
 
@@ -233,10 +236,10 @@ function _renderEvolChart(rows, metrica, dim) {
     groupFn = r => +r.hora_salida;
   }
 
-  // One dataset per empresa (or single if filtered)
-  const empsToShow = empresa === 'all'
-    ? _tempEmpConf
-    : _tempEmpConf.filter(e => e.id === empresa);
+  // Exactly one dataset — the selected empresa. No "all companies" option
+  // anymore (removed 2026-07-14), so empsToShow is always length 0 (empresa
+  // not yet resolved/no match) or 1.
+  const empsToShow = _tempEmpConf.filter(e => e.id === empresa);
 
   const datasets = empsToShow.map(emp => {
     const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
@@ -264,16 +267,18 @@ function _renderEvolChart(rows, metrica, dim) {
 
   // ── Fleet-percentile band overlay (Work Unit C, FB-5) ───────────────────
   // Only when dim === 'mes' (the flota reference is per-mes only — FB-5
-  // "Band hidden for non-mes dimensions"), exactly one company is selected
-  // (empsToShow.length === 1, i.e. empresa !== 'all' — FB-5 "Band hidden
-  // when all companies selected"), and _flotaRef actually has a matching
-  // key for the current metrica across the meses shown (empty/no-match
-  // _flotaRef — the current real state, since flota/*.csv are not yet
-  // uploaded to R2 — must produce zero extra datasets, not empty/broken
-  // ones). Prepended to the front of `datasets` so the per-company line(s)
-  // stay drawn last/on top, and so p10 (index 0) sits immediately before
-  // p90 (index 1) for Chart.js Filler's relative `fill: '-1'` to resolve
-  // to the p10 dataset, per design.md's exact mechanism.
+  // "Band hidden for non-mes dimensions"), the selected empresa actually
+  // resolved to a company (empsToShow.length === 1 — guards the edge case
+  // of an unresolved/stale empresa value with zero matches, since the "all
+  // companies" option was removed 2026-07-14 and empresa can no longer be
+  // 'all'/multi-company), and _flotaRef actually has a matching key for the
+  // current metrica across the meses shown (empty/no-match _flotaRef — the
+  // current real state, since flota/*.csv are not yet uploaded to R2 — must
+  // produce zero extra datasets, not empty/broken ones). Prepended to the
+  // front of `datasets` so the per-company line stays drawn last/on top,
+  // and so p10 (index 0) sits immediately before p90 (index 1) for
+  // Chart.js Filler's relative `fill: '-1'` to resolve to the p10 dataset,
+  // per design.md's exact mechanism.
   if (dim === 'mes' && empsToShow.length === 1 && _flotaRef.size) {
     const refPoints = mesesArr.map(m => _flotaRef.get(`${m}|${metrica}`) || null);
     const hasBand   = refPoints.some(p => p != null);
@@ -371,9 +376,9 @@ function _renderDiaSemChart(rows, metrica) {
   _destroyChart('temp-chart-diasem');
 
   const empresa = document.getElementById('temp-empresa-sel').value;
-  const empsToShow = empresa === 'all'
-    ? _tempEmpConf
-    : _tempEmpConf.filter(e => e.id === empresa);
+  // Exactly one empresa — no "all companies" option anymore (removed
+  // 2026-07-14).
+  const empsToShow = _tempEmpConf.filter(e => e.id === empresa);
 
   const datasets = empsToShow.map(emp => {
     const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
@@ -390,7 +395,11 @@ function _renderDiaSemChart(rows, metrica) {
   _tempCharts['temp-chart-diasem'] = new Chart(ctx, {
     type: 'bar',
     data: { labels: DIAS_ORDER.map(d => d.slice(0,3)), datasets },
-    options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: empsToShow.length > 1, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
+    // Legend was previously shown only for >1 company to distinguish lines
+    // (empsToShow.length > 1). With the "all companies" option removed
+    // (2026-07-14) there is always exactly one company/dataset here, so
+    // that distinction is no longer needed — the legend stays hidden.
+    options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: false, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
   });
 }
 
@@ -444,13 +453,15 @@ function _renderTabla(rows, metrica) {
 }
 
 // ── PERIODO A vs B COMPARISON (Work Unit D, PC-1/PC-2/PC-3) ─────────────────
-// Same-company self-comparison across two `mes` values. Visible only when a
-// single company is selected (empresa !== 'all' — PC-1 "Comparison hidden for
-// all companies"). Works with zero dependency on _flotaEmp (PC-2 "Comparison
-// works when reference data is absent") — valor is always computed inline
-// from _tempData using the same v > 0 filtered mean as _avgBy; when _flotaEmp
-// has a matching entry it is used instead (and unlocks the percentil column),
-// per design.md's exact fallback contract.
+// Same-company self-comparison across two `mes` values. #temp-empresa-sel
+// always resolves to exactly one selected company (its "all companies"
+// option was removed 2026-07-14 — PC-1's original "hidden for all companies"
+// gating is therefore no longer reachable and was dropped). Works with zero
+// dependency on _flotaEmp (PC-2 "Comparison works when reference data is
+// absent") — valor is always computed inline from _tempData using the same
+// v > 0 filtered mean as _avgBy; when _flotaEmp has a matching entry it is
+// used instead (and unlocks the percentil column), per design.md's exact
+// fallback contract.
 
 // Reads metric key/label pairs straight from the live #temp-metrica-sel DOM
 // options rather than a hardcoded duplicate list, so this can never drift
@@ -462,7 +473,6 @@ function _tempMetricasList() {
 }
 
 function _tempPeriodoRows(empresa) {
-  if (empresa === 'all') return [];
   return _tempData.filter(r => String(r.account_id ?? r.owner_id) === empresa);
 }
 
@@ -477,15 +487,9 @@ function _tempPeriodoPopulate(empresa) {
   const selB = document.getElementById('temp-periodo-b');
   if (!card || !selA || !selB) return;
 
-  if (empresa === 'all') {
-    card.style.display = 'none';
-    selA.innerHTML = '<option value="">—</option>';
-    selB.innerHTML = '<option value="">—</option>';
-    const out = document.getElementById('temp-periodo-cmp');
-    if (out) out.innerHTML = '';
-    return;
-  }
-
+  // No "all companies" hide-check here anymore (removed 2026-07-14) — the
+  // card is always relevant now that #temp-empresa-sel always resolves to
+  // exactly one company.
   card.style.display = 'block';
 
   const rows  = _tempPeriodoRows(empresa);
@@ -515,8 +519,8 @@ function _renderPeriodoCmp(rows, empresa) {
   const container = document.getElementById('temp-periodo-cmp');
   if (!container) return;
 
-  if (empresa === 'all') { container.innerHTML = ''; return; }
-
+  // No "all companies" early-out here anymore (removed 2026-07-14) — empresa
+  // always resolves to exactly one selected company.
   const selA = document.getElementById('temp-periodo-a');
   const selB = document.getElementById('temp-periodo-b');
   const mesA = selA && selA.value !== '' ? +selA.value : null;

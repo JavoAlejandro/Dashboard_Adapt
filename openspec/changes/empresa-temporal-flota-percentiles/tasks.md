@@ -576,3 +576,73 @@ work unit must rebase against. Recommend landing B → C → D → E in that lit
 on a single shared branch (or sequential PRs against the same base) rather than
 attempting parallel independent branches for C/D, to avoid a 3-way merge on the same
 ~15-line region of `tempApplyFilters`.
+
+---
+
+## Work Unit H — Post-hoc: Remove "all companies" option from Temporal (user-requested during testing, 2026-07-14)
+
+Not part of the original Work Unit A-G breakdown or any of the 7 resolved proposal
+decisions for `empresa-temporal-flota-percentiles`. This was a new, additional
+simplification the user explicitly requested while testing this change's completed
+Work Units A-F, implemented as a small follow-on on branch
+`feature/temporal-flota-g-remove-all-option` rather than a full new SDD cycle, given
+its size.
+
+### H1. Remove the "Todas" option from `#temp-empresa-sel`
+- `index.html`: deleted the static `<option value="all">Todas</option>` from
+  `#temp-empresa-sel` (was `index.html:699`).
+- `js/temporal.js` `temporalIngest()`: no longer seeds the select with
+  `<option value="all">Todas las empresas</option>` before appending company
+  options — the select now contains only per-company `<option>`s, so the browser's
+  default "first option selected" behavior picks the alphabetically-first company.
+- Scope confirmed via grep: `#temp-empresa-sel` is referenced only in `index.html`
+  and `js/temporal.js` (plus this change's own `tasks.md`/`spec.md`) — no other file
+  (`js/r2.js`, `js/gps.js`, etc.) reads its value or relies on an `'all'` option.
+  `#gps-empresa-sel` (Camión/GPS tab) and `#cmp-emp-a`/`#cmp-emp-b` (Global tab) are
+  separate selectors, explicitly out of scope, left untouched.
+
+### H2. Remove/simplify now-dead `empresa === 'all'` branches in `js/temporal.js`
+Since `#temp-empresa-sel` can no longer produce `'all'`, every branch that existed
+only to special-case it was reviewed and either removed or left in place with
+reasoning:
+- `tempApplyFilters()`: removed the `empresa === 'all' ? _tempData : ...` ternary —
+  always filters `_tempData` to the single selected company now.
+- `_renderEvolChart()`: removed the `empresa === 'all' ? _tempEmpConf : ...` ternary
+  building `empsToShow` — now always `_tempEmpConf.filter(e => e.id === empresa)`
+  (length 0 or 1). Left `fill: empsToShow.length === 1` and the fleet-band gate
+  `empsToShow.length === 1` as-is (updated their comments only) — both remain
+  correct, harmless guards against the edge case of an unresolved/no-match `empresa`
+  value; they are not dead code, just no longer reachable via a multi-company path.
+- `_renderDiaSemChart()`: removed the same `empresa === 'all'` ternary for
+  `empsToShow`. Its legend was previously shown only when `empsToShow.length > 1`
+  (to distinguish multiple company lines) — with exactly one company always
+  selected now, that condition can never be true again, so the legend is now
+  hardcoded `display: false` rather than left as an always-false expression.
+- `_renderKPIs()` and `_renderTabla()`: confirmed neither branches on
+  `empresa`/`'all'` at all (both operate purely on the already-filtered `rows`
+  argument) — no change needed.
+- `_tempPeriodoRows()`, `_tempPeriodoPopulate()`, `_renderPeriodoCmp()` (Work Unit
+  D's period-comparison feature): removed all three `empresa === 'all'` early-outs
+  (hide card / return empty rows / clear the comparison table). These existed solely
+  to hide the period-comparison UI for the multi-company case (`PC-1`), which can no
+  longer occur, so the card is now unconditionally shown once a company/data is
+  loaded — same effective behavior as before for the single-company case, minus the
+  now-unreachable hidden state.
+- Post-change grep of `js/temporal.js` for `'all'`/`=== 'all'` returns a single
+  explanatory code comment (no remaining `'all'`-branching code).
+
+### H3. Verification
+- `node --check js/temporal.js` passes.
+- Grepped `js/temporal.js` for `'all'`/`=== 'all'` before (8 code branches) and
+  after (0 branches, 1 comment) the change.
+- Grepped the repo for `temp-empresa-sel` — confirmed no file outside
+  `index.html`/`js/temporal.js` reads it.
+- `#gps-empresa-sel` and `#cmp-emp-a`/`#cmp-emp-b` confirmed untouched via
+  `git diff`.
+- This is directly testable by the user in-browser right now (no R2/`flota/*.csv`
+  dependency): once a company data source is loaded, `#temp-empresa-sel` should
+  offer only company names, no "Todas" option, and the Temporal sub-tab (KPIs,
+  evolution chart, día-semana chart, tabla, and period-comparison card) should
+  render exactly as it did for a single selected company before this change.
+- Not committed — left staged/unstaged on `feature/temporal-flota-g-remove-all-option`
+  for review.
