@@ -176,7 +176,7 @@ only depends on the frozen schema, not the generated data.
 
 ## Work Unit C — Percentile band overlay on the evolution chart (`js/temporal.js`)
 
-### C1. Add band datasets to `_renderEvolChart`
+### C1. Add band datasets to `_renderEvolChart` [x]
 - Inside `_renderEvolChart` (`js/temporal.js:147-208`), after computing the existing
   per-company `datasets` array, conditionally prepend/append three extra Chart.js line
   datasets **only when** `dim === 'mes'` **and** exactly one company is selected
@@ -209,7 +209,7 @@ only depends on the frozen schema, not the generated data.
 - Parallel: no (single-file, single-function change; sequential to avoid merge
   conflicts with C2/D work in the same file).
 
-### C2. Manual verification — band rendering
+### C2. Manual verification — band rendering [x] (code-trace verified only; no live/empirical render, see note)
 - Scenario 1 (design.md Testing Strategy): both `flota/*.csv` present (use the B4
   fixture or real uploaded data if available by this point), single company,
   `dim=mes` → gray band + dashed p50 render behind the company line, clearly reads as
@@ -221,12 +221,37 @@ only depends on the frozen schema, not the generated data.
 - Spec link: `FB-5` scenarios; `design.md` Testing Strategy #1, #2, #4.
 - Depends on: C1.
 - Parallel: no.
+- **Verification note (2026-07-14)**: `node --check js/temporal.js` passes. The
+  gating logic (`dim === 'mes' && empsToShow.length === 1 && _flotaRef.size`) was
+  code-traced, not run against real reference data, since `flota/*.csv` are still
+  absent from R2 (same real state as Work Unit B) — no valid token/data was
+  available in this session to exercise the happy path live, and the B4 fixture
+  was not built as part of this work unit (out of scope per the assigned Work
+  Unit C task list; B4 is itself optional/unstarted). Traced instead:
+  (a) `_flotaRef.size === 0` (current real state) short-circuits the `&&` before
+  the `.map`/`.some` band-building code ever runs, so `datasets` is left exactly
+  as the pre-existing per-company array — zero extra/empty/broken dataset
+  entries, existing company line(s) render unchanged, consistent with Work Unit
+  B's confirmed degradation behavior; (b) `dim !== 'mes'` (`dia_semana` /
+  `hora_salida`) short-circuits the same condition regardless of `_flotaRef`
+  contents — band never built; (c) `empresa === 'all'` (or any multi-company
+  selection) makes `empsToShow.length !== 1`, short-circuiting the condition —
+  band never built; (d) even if `_flotaRef` were hypothetically populated but had
+  no key matching the current `metrica` across the `mes` values on screen,
+  `hasBand` (`refPoints.some(p => p != null)` ) evaluates false and the
+  `datasets.unshift(...)` call is skipped — no null-filled band datasets are ever
+  added. Band-with-real-data visual rendering (gray band + dashed p50 actually
+  drawn, legend dedup behavior, values plausible across `metrica`/`mes`
+  switches) remains genuinely untested and requires the user to upload
+  `flota/percentiles_referencia.csv` (and ideally `flota/percentiles_empresa.csv`
+  for consistency, though C1 only reads the reference file) to R2 first — same
+  category of outstanding verification as B3's live in-browser confirmation.
 
 ---
 
 ## Work Unit D — Period-A-vs-B comparison UI (`js/temporal.js` + `index.html`)
 
-### D1. Add `#temp-periodo-a` / `#temp-periodo-b` selectors + comparison card markup in `index.html`
+### D1. Add `#temp-periodo-a` / `#temp-periodo-b` selectors + comparison card markup in `index.html` [x]
 - Add a new `temp-periodo-card` block inside `#temp-content`, after the tabla card
   (`index.html` around line 774-776, i.e. right after `</div>` closing `#temp-tabla`'s
   parent `.temp-chart-card` and before the closing `</div>` of `#temp-content`).
@@ -240,7 +265,7 @@ only depends on the frozen schema, not the generated data.
 - Parallel: yes (markup-only, can be authored alongside C1 in a different file with no
   conflict).
 
-### D2. Implement `_renderPeriodoCmp` + selector population in `js/temporal.js`
+### D2. Implement `_renderPeriodoCmp` + selector population in `js/temporal.js` [x]
 - New function, populate `#temp-periodo-a`/`#temp-periodo-b` `<option>`s from the
   distinct `mes` values present in `_tempData` for the currently selected company
   (labels via existing `MESES_LBL`) — called whenever `tempApplyFilters()` runs and
@@ -274,7 +299,7 @@ only depends on the frozen schema, not the generated data.
 - Parallel: no (single function, sequential authoring recommended to keep the
   raw-path and percentile-path consistent in one pass).
 
-### D3. Wire `_renderPeriodoCmp` into the filter/re-render flow
+### D3. Wire `_renderPeriodoCmp` into the filter/re-render flow [x]
 - Call the selector-population step from `tempApplyFilters()` (so switching company
   refreshes available months) and call the actual comparison render whenever both
   selects have values, on their own `onchange` (not gated behind the full
@@ -288,7 +313,7 @@ only depends on the frozen schema, not the generated data.
 - Depends on: D2.
 - Parallel: no.
 
-### D4. Manual verification — period comparison
+### D4. Manual verification — period comparison [x] (code-trace verified; fallback raw-average path is the one genuinely exercisable today, see note)
 - Single company, pick Mes A + Mes B → table shows all 14 metrics, correct deltas,
   red-on-increase/green-on-decrease consistently (`design.md` Testing Strategy #5).
 - `empresa=all` → card hidden (`design.md` Testing Strategy #6, `PC-1` scenario).
@@ -301,6 +326,36 @@ only depends on the frozen schema, not the generated data.
 - Spec link: `PC-1`, `PC-2`, `PC-3` scenarios; `design.md` Testing Strategy #5, #6.
 - Depends on: D3.
 - Parallel: no.
+- **Verification note (2026-07-14)**: `node --check` passes on both touched files
+  (`js/temporal.js`, and `index.html` has no JS to check but was hand-traced for
+  DOM id consistency: `#temp-periodo-card`, `#temp-periodo-a`, `#temp-periodo-b`,
+  `#temp-periodo-cmp` all match between the markup and the JS lookups). Since
+  `_flotaEmp` is empty in the current real environment (same state as Work Units
+  B/C — `flota/*.csv` not yet uploaded to R2), the fallback path is what would
+  actually run live today: `_renderPeriodoCmp` looks up `_flotaEmp.get(...)`,
+  gets `undefined` for every key, and falls through to `valorFallback(rowsA/B,
+  key)` (the same `v > 0`-filtered inline mean as `_avgBy`) for `valor`, with
+  `pctStr(null)` rendering `—` for `percentil` — this path was traced
+  line-by-line and additionally exercised with a standalone Node script
+  reproducing `fmtN`/polarity logic (see below), not run in an actual browser
+  DOM this session (no valid bearer token available, consistent with B3/C2's
+  same limitation). Polarity worked example confirmed via Node:
+  `valorA=100, valorB=150 → delta=+50 → deltaCls='neg'` (renders via the
+  reused `.cmp-delta.neg` CSS rule at `css/styles.css:906`, `color:#b33a3a`
+  red); `valorA=150, valorB=100 → delta=-50 → deltaCls='pos'` (`.cmp-delta.pos`,
+  `css/styles.css:905`, `color:#2d7a4f` green); `valorA=valorB → delta=0 →
+  deltaCls='neu'`, no arrow, per `PC-3`'s "same period selected twice" scenario.
+  Visibility gating traced: `_tempPeriodoPopulate('all')` sets
+  `#temp-periodo-card` to `display:none` and clears both selects + the results
+  container; any non-`'all'` `empresa` sets `display:block` and repopulates the
+  selects from that company's distinct `mes` values. This D4 gate is called
+  from the tail of `tempApplyFilters()`, so it re-runs on every company/filter
+  change and on `temporalLoadFlota()`'s late resolution (via `tempApplyFilters()`
+  re-invocation when `_tempData.length`), satisfying D3's repaint requirement
+  without a separate hook. The `_flotaEmp`-populated path (percentile columns
+  actually showing numeric values instead of `—`) remains genuinely untested —
+  same category of outstanding verification as B3/C2 — and requires the user to
+  upload `flota/percentiles_empresa.csv` to R2 first.
 
 ---
 
@@ -310,7 +365,7 @@ Can run any time after Work Unit B lands (no functional dependency on C/D) but i
 sequenced last per the requested ordering since it's the lowest-risk, most mechanical
 change and benefits from a stable file to diff against.
 
-### E1. Delete `_renderHoraChart` and its call site in `js/temporal.js`
+### E1. Delete `_renderHoraChart` and its call site in `js/temporal.js` [x]
 - Delete the `_renderHoraChart` function body (`js/temporal.js:238-267`).
 - Delete its call in `tempApplyFilters` (`js/temporal.js:77`,
   `_renderHoraChart(filtered, metrica);`).
@@ -324,7 +379,7 @@ change and benefits from a stable file to diff against.
   file beyond avoiding literal line-range merge conflicts — do this in its own
   small commit/diff to keep the removal easy to review in isolation).
 
-### E2. Delete `#temp-chart-hora` card in `index.html`
+### E2. Delete `#temp-chart-hora` card in `index.html` [x]
 - Delete the second column of `.temp-charts-2col` — the card containing
   `<canvas id="temp-chart-hora">` (`index.html:759-765`).
 - Implementer choice per `design.md`: either promote "Por día de semana" to full
@@ -341,7 +396,7 @@ change and benefits from a stable file to diff against.
   `getContext('2d')` on it, or vice versa).
 - Parallel: no.
 
-### E3. Manual verification — removal + retained option
+### E3. Manual verification — removal + retained option [x] (code-trace + static verification; visually testable by user in-browser now, see note)
 - `#temp-chart-hora` canvas/card is gone from the DOM; no console error referencing
   a missing canvas (`document.getElementById('temp-chart-hora').getContext` would
   throw if E1/E2 are done out of order — confirm no such error).
@@ -353,12 +408,31 @@ change and benefits from a stable file to diff against.
   Dimension) is the explicit spec scenario to check.
 - Depends on: E2.
 - Parallel: no.
+- **Verification note (2026-07-14)**: `node --check js/temporal.js` passes. Grepped
+  the whole `js/` tree and `index.html` for `_renderHoraChart` and `temp-chart-hora`
+  — zero remaining references in code (only historical mentions remain in
+  `openspec/changes/.../{proposal,design,tasks}.md` and this spec's own text, which
+  is expected). `git diff` confirms E1/E2 were done atomically in the same pass (no
+  intermediate state where the canvas is gone but the JS call site remains, or vice
+  versa), so the `getContext('2d')`-on-null-element failure mode described above
+  cannot occur. Confirmed via diff that `#temp-dim-sel`'s `hora_salida` `<option>`
+  (`index.html:722`, unchanged) and the `hora_salida` branch inside `_renderEvolChart`
+  (`js/temporal.js:231-233,249,334`, unchanged) show zero diff lines — both are
+  byte-identical to their pre-E1/E2 state. One pre-existing CSS rule,
+  `.temp-charts-2col` (`css/styles.css:1190-1192`), is now dead code (its only
+  consumer in `index.html` was removed by E2, which promoted the día-semana card to
+  full width instead of keeping the 2-col grid); left in place as out-of-scope for
+  Work Unit E (CSS is Work Unit F's scope) and flagged here rather than deleted
+  unilaterally. Unlike Work Units B/C/D, this removal has **no data dependency** —
+  it does not require `flota/*.csv` to be uploaded to R2 — so the DOM/console-error
+  checks and the `hora_salida` selectability check are genuinely and fully
+  verifiable by the user in-browser right now, with no blocked sub-scenario.
 
 ---
 
 ## Work Unit F — CSS (`css/styles.css`)
 
-### F1. Band legend/label styling
+### F1. Band legend/label styling [x]
 - Any label/legend styling needed beyond what Chart.js's built-in legend renders for
   the `"Rango flota (p10–p90)"` / `"Mediana flota (p50)"` datasets (e.g. a small
   caption under the chart clarifying it's a fleet reference, not a company, if the
@@ -367,8 +441,28 @@ change and benefits from a stable file to diff against.
   `design.md` Testing Strategy #1's expected outcome text).
 - Depends on: C1 (needs to know the final dataset/label shape before styling).
 - Parallel: yes (independent of D's table styling).
+- **Verification note (2026-07-14)**: no new CSS was added — the Chart.js legend
+  (`_renderEvolChart`, `js/temporal.js:349-363`) is drawn entirely on the `<canvas>`
+  itself via the Filler/legend plugin, styled only through JS `plugins.legend.labels`
+  config (`_chartDefaults()`); there is no DOM/CSS hook for canvas-rendered legend
+  text, so "CSS-side polish" of the legend text itself is not possible by
+  construction. Checked the two candidates this task called out: (a) the legend
+  labels (`FLOTA_BAND_LABEL`/`FLOTA_MEDIAN_LABEL`) are already distinct enough,
+  paired with `#temp-chart1-sub`'s existing subtitle text (`"{metrica} — promedio
+  por {dim}"`, `js/temporal.js:336-337`) to read as a fleet reference, not a company
+  — no separate caption element exists in `index.html` and this work unit is
+  constrained to CSS-only (no new HTML), so a new explanatory caption was out of
+  scope by the task's own constraint; (b) container spacing — `.temp-chart-card`
+  (padding `18px 20px`) and `.temp-chart-header` (`margin-bottom:14px`) are
+  unchanged and already provide adequate breathing room above the canvas; Chart.js
+  reflows its own internal legend rows (`responsive:true`) when the band adds up to
+  3 extra legend entries, which is internal canvas layout, not a CSS concern. No
+  duplicate/conflicting rule risk since nothing was added. Visual confirmation that
+  spacing "feels right" with the band actually drawn still needs the user's eyes
+  once `flota/percentiles_referencia.csv` is live in R2 (band currently renders
+  zero-dataset in the real environment, same degraded state as Work Units B/C).
 
-### F2. Period-comparison table + delta polarity coloring
+### F2. Period-comparison table + delta polarity coloring [x]
 - Table styling for `#temp-periodo-cmp` — reuse `.temp-table`'s existing conventions
   (`css/styles.css:1194-1210`: header/row/`td-num`/`td-accent` patterns) rather than
   inventing a parallel table style from scratch.
@@ -379,6 +473,38 @@ change and benefits from a stable file to diff against.
   same-period zero state).
 - Depends on: D2 (needs the final cell/class structure `_renderPeriodoCmp` emits).
 - Parallel: yes (independent of F1).
+- **Verification note (2026-07-14)**: no new CSS was added — `_renderPeriodoCmp`
+  (`js/temporal.js:514-598`) already emits `<table class="temp-table">` and
+  `<span class="cmp-delta ${deltaCls}">` (`deltaCls` ∈ `pos`/`neg`/`neu`), reusing
+  the exact classes this task's "or reuse `td-accent`-style naming" alternative
+  calls for, superseding the "two new utility classes" option — confirmed by the
+  user in-browser as already rendering correctly ("el selector de dos meses
+  despliega la tabla comparativa"). Traced every class the markup references
+  against `css/styles.css` to confirm no typo/missing selector:
+  `.temp-table`/`.temp-table th`/`.temp-table td`/`.td-num` all exist
+  (`css/styles.css:1193-1210`); `.cmp-delta`/`.pos`/`.neg`/`.neu` exist and, per
+  cascade order (the later of two definitions in the file wins — see below), the
+  effective runtime style is `css/styles.css:895-907` (`font-size:10px`,
+  `padding:2px 6px`, `border-radius:3px`, `min-width:44px`, `white-space:nowrap`,
+  `pos`=`#2d7a4f` green, `neg`=`#b33a3a` red, `neu`=muted), which is legible against
+  both the white/near-white `.temp-table` row background and the even-row tint
+  (`css/styles.css:1208`). The two `<select>` elements (`#temp-periodo-a/b`) use the
+  same `.gps-select`/`.ctrl-lbl`/`.gps-filters` classes as `#temp-empresa-sel`/
+  `#temp-metrica-sel`/`#temp-dim-sel` — confirmed identical spacing/appearance
+  convention, no override needed. **Pre-existing finding, not fixed (out of scope,
+  flagged only)**: `css/styles.css` defines `.cmp-delta`/`.pos`/`.neg`/`.neu` twice
+  — once at lines 333-339 (older/unused-looking values: `#e6f4ea`/`#fde8e8`/
+  `#f0ede8` backgrounds) and once at lines 895-907 (the one actually in effect,
+  and the one `comparativas.js:854` also targets). This duplication predates this
+  change (not introduced by Work Unit D or F) and de-duplicating it would touch a
+  shared rule consumed by `comparativas.js`'s unrelated `.cmp-col-dividers` UI —
+  left untouched per the "minimal and targeted" / "don't introduce a new... scale"
+  constraint; flagging for a future cleanup pass rather than fixing unilaterally
+  here. Also removed the dead `.temp-charts-2col` rule
+  (`css/styles.css:1190-1192` pre-edit) flagged by Work Unit E's E3 note — grepped
+  `index.html` and `js/` for `temp-charts-2col`, zero remaining usages (E2 already
+  promoted "Por día de semana" to a full-width `.temp-chart-card`), so the rule was
+  genuinely dead; removed, no other selector depends on it.
 
 ---
 
@@ -450,3 +576,73 @@ work unit must rebase against. Recommend landing B → C → D → E in that lit
 on a single shared branch (or sequential PRs against the same base) rather than
 attempting parallel independent branches for C/D, to avoid a 3-way merge on the same
 ~15-line region of `tempApplyFilters`.
+
+---
+
+## Work Unit H — Post-hoc: Remove "all companies" option from Temporal (user-requested during testing, 2026-07-14)
+
+Not part of the original Work Unit A-G breakdown or any of the 7 resolved proposal
+decisions for `empresa-temporal-flota-percentiles`. This was a new, additional
+simplification the user explicitly requested while testing this change's completed
+Work Units A-F, implemented as a small follow-on on branch
+`feature/temporal-flota-g-remove-all-option` rather than a full new SDD cycle, given
+its size.
+
+### H1. Remove the "Todas" option from `#temp-empresa-sel`
+- `index.html`: deleted the static `<option value="all">Todas</option>` from
+  `#temp-empresa-sel` (was `index.html:699`).
+- `js/temporal.js` `temporalIngest()`: no longer seeds the select with
+  `<option value="all">Todas las empresas</option>` before appending company
+  options — the select now contains only per-company `<option>`s, so the browser's
+  default "first option selected" behavior picks the alphabetically-first company.
+- Scope confirmed via grep: `#temp-empresa-sel` is referenced only in `index.html`
+  and `js/temporal.js` (plus this change's own `tasks.md`/`spec.md`) — no other file
+  (`js/r2.js`, `js/gps.js`, etc.) reads its value or relies on an `'all'` option.
+  `#gps-empresa-sel` (Camión/GPS tab) and `#cmp-emp-a`/`#cmp-emp-b` (Global tab) are
+  separate selectors, explicitly out of scope, left untouched.
+
+### H2. Remove/simplify now-dead `empresa === 'all'` branches in `js/temporal.js`
+Since `#temp-empresa-sel` can no longer produce `'all'`, every branch that existed
+only to special-case it was reviewed and either removed or left in place with
+reasoning:
+- `tempApplyFilters()`: removed the `empresa === 'all' ? _tempData : ...` ternary —
+  always filters `_tempData` to the single selected company now.
+- `_renderEvolChart()`: removed the `empresa === 'all' ? _tempEmpConf : ...` ternary
+  building `empsToShow` — now always `_tempEmpConf.filter(e => e.id === empresa)`
+  (length 0 or 1). Left `fill: empsToShow.length === 1` and the fleet-band gate
+  `empsToShow.length === 1` as-is (updated their comments only) — both remain
+  correct, harmless guards against the edge case of an unresolved/no-match `empresa`
+  value; they are not dead code, just no longer reachable via a multi-company path.
+- `_renderDiaSemChart()`: removed the same `empresa === 'all'` ternary for
+  `empsToShow`. Its legend was previously shown only when `empsToShow.length > 1`
+  (to distinguish multiple company lines) — with exactly one company always
+  selected now, that condition can never be true again, so the legend is now
+  hardcoded `display: false` rather than left as an always-false expression.
+- `_renderKPIs()` and `_renderTabla()`: confirmed neither branches on
+  `empresa`/`'all'` at all (both operate purely on the already-filtered `rows`
+  argument) — no change needed.
+- `_tempPeriodoRows()`, `_tempPeriodoPopulate()`, `_renderPeriodoCmp()` (Work Unit
+  D's period-comparison feature): removed all three `empresa === 'all'` early-outs
+  (hide card / return empty rows / clear the comparison table). These existed solely
+  to hide the period-comparison UI for the multi-company case (`PC-1`), which can no
+  longer occur, so the card is now unconditionally shown once a company/data is
+  loaded — same effective behavior as before for the single-company case, minus the
+  now-unreachable hidden state.
+- Post-change grep of `js/temporal.js` for `'all'`/`=== 'all'` returns a single
+  explanatory code comment (no remaining `'all'`-branching code).
+
+### H3. Verification
+- `node --check js/temporal.js` passes.
+- Grepped `js/temporal.js` for `'all'`/`=== 'all'` before (8 code branches) and
+  after (0 branches, 1 comment) the change.
+- Grepped the repo for `temp-empresa-sel` — confirmed no file outside
+  `index.html`/`js/temporal.js` reads it.
+- `#gps-empresa-sel` and `#cmp-emp-a`/`#cmp-emp-b` confirmed untouched via
+  `git diff`.
+- This is directly testable by the user in-browser right now (no R2/`flota/*.csv`
+  dependency): once a company data source is loaded, `#temp-empresa-sel` should
+  offer only company names, no "Todas" option, and the Temporal sub-tab (KPIs,
+  evolution chart, día-semana chart, tabla, and period-comparison card) should
+  render exactly as it did for a single selected company before this change.
+- Not committed — left staged/unstaged on `feature/temporal-flota-g-remove-all-option`
+  for review.

@@ -36,6 +36,16 @@ const FLOTA_EMP_PATH = 'flota/percentiles_empresa.csv';
 let _flotaRef = new Map();   // "${mes}|${metrica}" → {p10,p25,p50,p75,p90,n_empresas}
 let _flotaEmp = new Map();   // "${account_id}|${mes}|${metrica}" → {valor, percentil}
 
+// Neutral muted styling for the fleet-percentile band overlay on
+// _renderEvolChart (Work Unit C). Deliberately local constants, NOT a
+// core.js TOKENS addition — TOKENS is Object.freeze'd and out of scope per
+// design.md's "no TOKENS edit" decision. A desaturated gray reads as a
+// reference range, not another company hue (TOKENS.companySeriesColors).
+const FLOTA_BAND_LINE    = 'rgba(138,134,126,0.35)';
+const FLOTA_BAND_FILL    = 'rgba(138,134,126,0.10)';
+const FLOTA_BAND_LABEL   = 'Rango flota (p10–p90)';
+const FLOTA_MEDIAN_LABEL = 'Mediana flota (p50)';
+
 // Additive fleet-percentile loader. Fire-and-forget from r2.js (never
 // awaited) — must not block/delay KPIs, evolution chart, día-semana chart or
 // tabla, all of which render from temporalIngest's primary path. On success,
@@ -97,10 +107,13 @@ function temporalIngest(rows) {
     id, color: TOKENS.companySeriesColors[i % TOKENS.companySeriesColors.length],
   }));
 
-  // Populate empresa selector
+  // Populate empresa selector. No "all companies" option (removed 2026-07-14,
+  // user-requested) — Temporal always operates on exactly one selected
+  // company, so the first company alphabetically becomes the default via the
+  // browser's normal <select> auto-select-first-option behavior.
   const sel = document.getElementById('temp-empresa-sel');
   if (sel) {
-    sel.innerHTML = '<option value="all">Todas las empresas</option>';
+    sel.innerHTML = '';
     emps.forEach(id => {
       const o = document.createElement('option');
       o.value = id; o.textContent = id; sel.appendChild(o);
@@ -121,9 +134,9 @@ function tempApplyFilters() {
   const metrica  = document.getElementById('temp-metrica-sel').value;
   const dim      = document.getElementById('temp-dim-sel').value;
 
-  const filtered = empresa === 'all'
-    ? _tempData
-    : _tempData.filter(r => String(r.account_id ?? r.owner_id) === empresa);
+  // No "all companies" option anymore (removed 2026-07-14) — empresa always
+  // resolves to exactly one selected company.
+  const filtered = _tempData.filter(r => String(r.account_id ?? r.owner_id) === empresa);
 
   if (!filtered.length) return;
 
@@ -133,8 +146,8 @@ function tempApplyFilters() {
   _renderKPIs(filtered, metrica);
   _renderEvolChart(filtered, metrica, dim);
   _renderDiaSemChart(filtered, metrica);
-  _renderHoraChart(filtered, metrica);
   _renderTabla(filtered, metrica);
+  _tempPeriodoPopulate(empresa);
 }
 
 // ── KPIs ─────────────────────────────────────────────────────────────────────
@@ -209,11 +222,11 @@ function _renderEvolChart(rows, metrica, dim) {
   const empresa = document.getElementById('temp-empresa-sel').value;
 
   // Labels depend on dimension
-  let labels, groupFn;
+  let labels, groupFn, mesesArr;
   if (dim === 'mes') {
-    const meses = [...new Set(rows.map(r => +r.mes))].sort((a,b) => a-b);
-    labels  = meses.map(m => MESES_LBL[m] || m);
-    groupFn = r => +r.mes;
+    mesesArr = [...new Set(rows.map(r => +r.mes))].sort((a,b) => a-b);
+    labels   = mesesArr.map(m => MESES_LBL[m] || m);
+    groupFn  = r => +r.mes;
   } else if (dim === 'dia_semana') {
     labels  = DIAS_ORDER;
     groupFn = r => r.dia_semana;
@@ -223,17 +236,17 @@ function _renderEvolChart(rows, metrica, dim) {
     groupFn = r => +r.hora_salida;
   }
 
-  // One dataset per empresa (or single if filtered)
-  const empsToShow = empresa === 'all'
-    ? _tempEmpConf
-    : _tempEmpConf.filter(e => e.id === empresa);
+  // Exactly one dataset — the selected empresa. No "all companies" option
+  // anymore (removed 2026-07-14), so empsToShow is always length 0 (empresa
+  // not yet resolved/no match) or 1.
+  const empsToShow = _tempEmpConf.filter(e => e.id === empresa);
 
   const datasets = empsToShow.map(emp => {
     const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
     const byDim   = _avgBy(empRows, groupFn, metrica);
 
     const data = dim === 'mes'
-      ? [...new Set(rows.map(r => +r.mes))].sort((a,b)=>a-b).map(m => byDim[m] ?? null)
+      ? mesesArr.map(m => byDim[m] ?? null)
       : dim === 'dia_semana'
         ? DIAS_ORDER.map(d => byDim[d] ?? null)
         : [...new Set(rows.map(r => +r.hora_salida).filter(h => !isNaN(h)))].sort((a,b)=>a-b).map(h => byDim[h] ?? null);
@@ -252,6 +265,76 @@ function _renderEvolChart(rows, metrica, dim) {
     };
   });
 
+  // ── Fleet-percentile band overlay (Work Unit C, FB-5) ───────────────────
+  // Only when dim === 'mes' (the flota reference is per-mes only — FB-5
+  // "Band hidden for non-mes dimensions"), the selected empresa actually
+  // resolved to a company (empsToShow.length === 1 — guards the edge case
+  // of an unresolved/stale empresa value with zero matches, since the "all
+  // companies" option was removed 2026-07-14 and empresa can no longer be
+  // 'all'/multi-company), and _flotaRef actually has a matching key for the
+  // current metrica across the meses shown (empty/no-match _flotaRef — the
+  // current real state, since flota/*.csv are not yet uploaded to R2 — must
+  // produce zero extra datasets, not empty/broken ones). Prepended to the
+  // front of `datasets` so the per-company line stays drawn last/on top,
+  // and so p10 (index 0) sits immediately before p90 (index 1) for
+  // Chart.js Filler's relative `fill: '-1'` to resolve to the p10 dataset,
+  // per design.md's exact mechanism.
+  if (dim === 'mes' && empsToShow.length === 1 && _flotaRef.size) {
+    const refPoints = mesesArr.map(m => _flotaRef.get(`${m}|${metrica}`) || null);
+    const hasBand   = refPoints.some(p => p != null);
+
+    if (hasBand) {
+      const p10Data = refPoints.map(p => p ? p.p10 : null);
+      const p90Data = refPoints.map(p => p ? p.p90 : null);
+      const p50Data = refPoints.map(p => p ? p.p50 : null);
+
+      datasets.unshift(
+        {
+          // Lower bound — no fill of its own; exists so p90's fill:'-1'
+          // has a target immediately preceding it in the array.
+          label: FLOTA_BAND_LABEL,
+          data: p10Data,
+          borderColor: FLOTA_BAND_LINE,
+          backgroundColor: FLOTA_BAND_FILL,
+          borderWidth: 1,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: false,
+          spanGaps: true,
+        },
+        {
+          // Upper bound — fills toward the p10 dataset directly above
+          // (relative index -1), which is how Chart.js's built-in Filler
+          // plugin paints the p10–p90 band.
+          label: FLOTA_BAND_LABEL,
+          data: p90Data,
+          borderColor: FLOTA_BAND_LINE,
+          backgroundColor: FLOTA_BAND_FILL,
+          borderWidth: 1,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: '-1',
+          spanGaps: true,
+        },
+        {
+          // Dashed fleet median, drawn on top of the band fill (but below
+          // the company line(s), which are appended after this in the
+          // datasets array).
+          label: FLOTA_MEDIAN_LABEL,
+          data: p50Data,
+          borderColor: FLOTA_BAND_LINE,
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderDash: [4, 3],
+          pointRadius: 0,
+          tension: 0.3,
+          fill: false,
+          spanGaps: true,
+        }
+      );
+    }
+  }
+
   const dimLabels = { mes: 'mes', dia_semana: 'día de semana', hora_salida: 'hora de salida' };
   document.getElementById('temp-chart1-title').textContent =
     `Evolución por ${dimLabels[dim]}`;
@@ -259,10 +342,32 @@ function _renderEvolChart(rows, metrica, dim) {
     `${metrica} — promedio por ${dimLabels[dim]}`;
 
   const ctx = document.getElementById('temp-chart-evol').getContext('2d');
+  const baseDefaults = _chartDefaults();
   _tempCharts['temp-chart-evol'] = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
-    options: { ..._chartDefaults(), interaction: { mode: 'index', intersect: false } }
+    options: {
+      ...baseDefaults,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        ...baseDefaults.plugins,
+        legend: {
+          ...baseDefaults.plugins.legend,
+          labels: {
+            ...baseDefaults.plugins.legend.labels,
+            // The band's lower (p10) and upper/fill (p90) datasets share
+            // FLOTA_BAND_LABEL so the fill target and its legend text stay
+            // coupled, but the legend itself should show that label once —
+            // keep only the fill (p90) dataset's entry.
+            filter: (item, data) => {
+              if (item.text !== FLOTA_BAND_LABEL) return true;
+              const ds = data.datasets[item.datasetIndex];
+              return !!ds && ds.fill === '-1';
+            },
+          },
+        },
+      },
+    },
   });
 }
 
@@ -271,9 +376,9 @@ function _renderDiaSemChart(rows, metrica) {
   _destroyChart('temp-chart-diasem');
 
   const empresa = document.getElementById('temp-empresa-sel').value;
-  const empsToShow = empresa === 'all'
-    ? _tempEmpConf
-    : _tempEmpConf.filter(e => e.id === empresa);
+  // Exactly one empresa — no "all companies" option anymore (removed
+  // 2026-07-14).
+  const empsToShow = _tempEmpConf.filter(e => e.id === empresa);
 
   const datasets = empsToShow.map(emp => {
     const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
@@ -290,38 +395,11 @@ function _renderDiaSemChart(rows, metrica) {
   _tempCharts['temp-chart-diasem'] = new Chart(ctx, {
     type: 'bar',
     data: { labels: DIAS_ORDER.map(d => d.slice(0,3)), datasets },
-    options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: empsToShow.length > 1, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
-  });
-}
-
-// ── CHART 3: Por hora de salida ───────────────────────────────────────────────
-function _renderHoraChart(rows, metrica) {
-  _destroyChart('temp-chart-hora');
-
-  const empresa = document.getElementById('temp-empresa-sel').value;
-  const empsToShow = empresa === 'all'
-    ? _tempEmpConf
-    : _tempEmpConf.filter(e => e.id === empresa);
-
-  const horas = [...new Set(rows.map(r => +r.hora_salida).filter(h => !isNaN(h) && h >= 0))].sort((a,b)=>a-b);
-  const horaLabels = horas.map(h => `${String(h).padStart(2,'0')}h`);
-
-  const datasets = empsToShow.map(emp => {
-    const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
-    const byHora  = _avgBy(empRows, r => +r.hora_salida, metrica);
-    return {
-      label: emp.id,
-      data:  horas.map(h => byHora[h] ?? 0),
-      backgroundColor: emp.color + 'cc',
-      borderRadius: 3,
-    };
-  });
-
-  const ctx = document.getElementById('temp-chart-hora').getContext('2d');
-  _tempCharts['temp-chart-hora'] = new Chart(ctx, {
-    type: 'bar',
-    data: { labels: horaLabels, datasets },
-    options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: empsToShow.length > 1, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
+    // Legend was previously shown only for >1 company to distinguish lines
+    // (empsToShow.length > 1). With the "all companies" option removed
+    // (2026-07-14) there is always exactly one company/dataset here, so
+    // that distinction is no longer needed — the legend stays hidden.
+    options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: false, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
   });
 }
 
@@ -370,6 +448,155 @@ function _renderTabla(rows, metrica) {
       <td class="td-num">${horasProm.toFixed(1)}h</td>
     </tr>`;
   });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// ── PERIODO A vs B COMPARISON (Work Unit D, PC-1/PC-2/PC-3) ─────────────────
+// Same-company self-comparison across two `mes` values. #temp-empresa-sel
+// always resolves to exactly one selected company (its "all companies"
+// option was removed 2026-07-14 — PC-1's original "hidden for all companies"
+// gating is therefore no longer reachable and was dropped). Works with zero
+// dependency on _flotaEmp (PC-2 "Comparison works when reference data is
+// absent") — valor is always computed inline from _tempData using the same
+// v > 0 filtered mean as _avgBy; when _flotaEmp has a matching entry it is
+// used instead (and unlocks the percentil column), per design.md's exact
+// fallback contract.
+
+// Reads metric key/label pairs straight from the live #temp-metrica-sel DOM
+// options rather than a hardcoded duplicate list, so this can never drift
+// from the 14 identifiers actually offered elsewhere in the sub-tab.
+function _tempMetricasList() {
+  const sel = document.getElementById('temp-metrica-sel');
+  if (!sel) return [];
+  return [...sel.options].map(o => ({ key: o.value, label: o.textContent }));
+}
+
+function _tempPeriodoRows(empresa) {
+  return _tempData.filter(r => String(r.account_id ?? r.owner_id) === empresa);
+}
+
+// Populates #temp-periodo-a/#temp-periodo-b from the distinct mes values
+// present for the selected company, toggles the card's visibility, and
+// triggers a repaint of the comparison table (so the card stays in sync
+// whenever tempApplyFilters() runs — company switch, filter change, or a
+// late temporalLoadFlota() resolution per design.md's Data Flow diagram).
+function _tempPeriodoPopulate(empresa) {
+  const card = document.getElementById('temp-periodo-card');
+  const selA = document.getElementById('temp-periodo-a');
+  const selB = document.getElementById('temp-periodo-b');
+  if (!card || !selA || !selB) return;
+
+  // No "all companies" hide-check here anymore (removed 2026-07-14) — the
+  // card is always relevant now that #temp-empresa-sel always resolves to
+  // exactly one company.
+  card.style.display = 'block';
+
+  const rows  = _tempPeriodoRows(empresa);
+  const meses = [...new Set(rows.map(r => +r.mes))].filter(m => !isNaN(m)).sort((a,b) => a-b);
+
+  const prevA = selA.value, prevB = selB.value;
+  const optsHtml = '<option value="">—</option>' +
+    meses.map(m => `<option value="${m}">${MESES_LBL[m] || m}</option>`).join('');
+  selA.innerHTML = optsHtml;
+  selB.innerHTML = optsHtml;
+  if (meses.includes(+prevA)) selA.value = prevA;
+  if (meses.includes(+prevB)) selB.value = prevB;
+
+  tempPeriodoCmpChanged();
+}
+
+// onchange handler for both period selects. Deliberately not gated behind
+// the full tempApplyFilters() — this raw-_tempData comparison doesn't need
+// metrica/dim filter state, only the currently-selected company (design.md
+// Period-A-vs-B Comparison UI section).
+function tempPeriodoCmpChanged() {
+  const empresa = document.getElementById('temp-empresa-sel').value;
+  _renderPeriodoCmp(_tempPeriodoRows(empresa), empresa);
+}
+
+function _renderPeriodoCmp(rows, empresa) {
+  const container = document.getElementById('temp-periodo-cmp');
+  if (!container) return;
+
+  // No "all companies" early-out here anymore (removed 2026-07-14) — empresa
+  // always resolves to exactly one selected company.
+  const selA = document.getElementById('temp-periodo-a');
+  const selB = document.getElementById('temp-periodo-b');
+  const mesA = selA && selA.value !== '' ? +selA.value : null;
+  const mesB = selB && selB.value !== '' ? +selB.value : null;
+
+  if (mesA == null || mesB == null) {
+    container.innerHTML = '<p style="font-size:11px;color:var(--muted);padding:8px 0">Selecciona Periodo A y Periodo B para comparar.</p>';
+    return;
+  }
+
+  const metricas = _tempMetricasList();
+  const rowsA = rows.filter(r => +r.mes === mesA);
+  const rowsB = rows.filter(r => +r.mes === mesB);
+
+  // Same v > 0 filtered mean as _avgBy, computed inline so this works with
+  // zero dependency on _flotaEmp (PC-2 "Comparison works when reference data
+  // is absent").
+  const valorFallback = (rs, metrica) => {
+    const vals = rs.map(r => +r[metrica]).filter(v => !isNaN(v) && v > 0);
+    return vals.length ? vals.reduce((a,b) => a+b, 0) / vals.length : 0;
+  };
+
+  const fmtN   = v => Math.abs(v) >= 1000 ? (v/1000).toFixed(1) + 'k' : v.toFixed(1);
+  const pctStr = p => (p == null || isNaN(p)) ? '—' : (+p).toFixed(1);
+
+  let html = `<table class="temp-table">
+    <thead><tr>
+      <th>Métrica</th>
+      <th>Mes A (${MESES_LBL[mesA] || mesA})</th>
+      <th>Pctl A</th>
+      <th>Mes B (${MESES_LBL[mesB] || mesB})</th>
+      <th>Pctl B</th>
+      <th>Δ valor</th>
+    </tr></thead><tbody>`;
+
+  metricas.forEach(({ key, label }) => {
+    // _flotaEmp when populated (Work Unit B); otherwise fall back to the
+    // inline raw-average computation. Same function handles both scenarios
+    // so they can never drift apart (D2 requirement).
+    const flotaA = _flotaEmp.get(`${empresa}|${mesA}|${key}`);
+    const flotaB = _flotaEmp.get(`${empresa}|${mesB}|${key}`);
+
+    const valorA = flotaA ? flotaA.valor : valorFallback(rowsA, key);
+    const valorB = flotaB ? flotaB.valor : valorFallback(rowsB, key);
+    const pctA   = flotaA ? flotaA.percentil : null;
+    const pctB   = flotaB ? flotaB.percentil : null;
+
+    const delta = valorB - valorA;
+
+    // Impact-polarity styling (resolved 2026-07-14, spec PC-3): higher p/h
+    // is worse (increase → red/"neg"), lower is better (decrease →
+    // green/"pos"), uniform across all 14 metrics. Δ === 0 → neutral,
+    // no directional arrow (covers "same period selected twice" and any
+    // other zero-delta row).
+    let deltaCls, deltaTxt;
+    if (delta === 0) {
+      deltaCls = 'neu';
+      deltaTxt = fmtN(0);
+    } else if (delta > 0) {
+      deltaCls = 'neg'; // increase = worse outcome
+      deltaTxt = '↑ +' + fmtN(delta);
+    } else {
+      deltaCls = 'pos'; // decrease = better outcome
+      deltaTxt = '↓ ' + fmtN(delta); // fmtN keeps the sign for negatives
+    }
+
+    html += `<tr>
+      <td>${label}</td>
+      <td class="td-num">${fmtN(valorA)}</td>
+      <td class="td-num">${pctStr(pctA)}</td>
+      <td class="td-num">${fmtN(valorB)}</td>
+      <td class="td-num">${pctStr(pctB)}</td>
+      <td class="td-num"><span class="cmp-delta ${deltaCls}" style="display:inline-block">${deltaTxt}</span></td>
+    </tr>`;
+  });
+
   html += '</tbody></table>';
   container.innerHTML = html;
 }
