@@ -188,6 +188,20 @@ function busColor(feature, idx) {
   return BUS_COLORS_DEF[idx % BUS_COLORS_DEF.length];
 }
 
+// ── empresa-source ingest target ────────────────────────────────────────────
+// Called by r2.js's _empresaSourceIngest(rows) once the empresa CSV is
+// parsed; owns building statsData from those rows so r2.js no longer writes
+// this file's state directly.
+function gpsSetStats(rows) {
+  statsData = {};
+  rows.forEach(r => {
+    const id = r.owner_id, dia = r.dia;
+    if (id == null || dia == null) return;
+    if (r.mes != null) statsData[`${id}_${dia}_${r.mes}`] = r;
+    statsData[`${id}_${dia}`] = r;
+  });
+}
+
 // ── STATS CSV ─────────────────────────────────────────────────────────────
 function loadStatsCSV(ev) {
   const file = ev.target.files[0];
@@ -289,9 +303,8 @@ function setTotals(vals, horas, tiempoDetencion, tiempoMov, tiempoOperacion) {
   }
   document.getElementById('bsp-totals').style.display = 'flex';
 }
-const BSP_COLORS_GSE  = ['#8b5cf6','#6366f1','#3b82f6','#0ea5e9','#06b6d4','#14b8a6'];
-const BSP_COLORS_EDAD = ['#f59e0b','#f97316','#ef4444','#ec4899','#a855f7','#6366f1'];
-const BSP_COLORS = [...BSP_COLORS_GSE, ...BSP_COLORS_EDAD];
+// TOKENS.segmentColors.bsp.{gse,edad} — core.js (bus-stop segment display palette)
+const BSP_COLORS = [...TOKENS.segmentColors.bsp.gse, ...TOKENS.segmentColors.bsp.edad];
 
 
 // ── TREND ARROW vs ESTIMADOR POBLACIONAL ────────────────────────────────
@@ -2156,6 +2169,7 @@ function populateViajeSel(keepVal) {
 
 function onViajeChange() { applyFilters(); }
 
+// empresa-filter — public entry point (index.html #gps-empresa-sel onchange); name kept stable.
 function onEmpresaChange() {
   populateBusSel();
   populateMesSel();
@@ -2304,8 +2318,9 @@ const EST_EDAD_KEYS = [
 ];
 const EST_GSE_LABELS  = ['GSE AB','GSE C1a','GSE C2','GSE C3','GSE D','GSE E'];
 const EST_EDAD_LABELS = ['<25','25–34','35–44','45–54','55–64','>65'];
-const EST_GSE_COLORS  = ['#7c3aed','#4f46e5','#2563eb','#0891b2','#059669','#16a34a'];
-const EST_EDAD_COLORS = ['#f59e0b','#f97316','#ef4444','#ec4899','#a855f7','#6366f1'];
+// TOKENS.segmentColors.est.{gse,edad} — core.js (estimadores panel palette)
+const EST_GSE_COLORS  = TOKENS.segmentColors.est.gse;
+const EST_EDAD_COLORS = TOKENS.segmentColors.est.edad;
 
 function calcEstimadores(rows) {
   // rows: raw CSV rows (Papa.parse output)

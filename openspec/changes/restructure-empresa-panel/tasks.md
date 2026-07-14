@@ -38,24 +38,24 @@ Chain strategy: stacked-to-main-in-sequence (confirmed by user)
 
 ## Phase 3: r2.js — Route Through core.js
 
-- [ ] 3.1 Remove `r2Fetch`/`TOKENS` definitions from `js/r2.js`; route empresa CSV load through `fetchParseCsv(path)`.
-- [ ] 3.2 Rename `_r2ProcesarImpactos` → `_empresaSourceIngest` (internal only); add empresa-source role banner comment.
-- [ ] 3.3 Manual check: `#r2-empresa-sel` loads routes+impactos; `#gps-status` counts; no console errors.
+- [x] 3.1 Remove `r2Fetch`/`TOKENS` definitions from `js/r2.js`; route empresa CSV load through `fetchParseCsv(path)`.
+- [x] 3.2 Rename `_r2ProcesarImpactos` → `_empresaSourceIngest` (internal only); add empresa-source role banner comment.
+- [x] 3.3 Manual check: `#r2-empresa-sel` loads routes+impactos; `#gps-status` counts; no console errors.
 
 ## Phase 4: temporal.js — Explicit Ingest Interface
 
-- [ ] 4.1 Delete `tempLoadCSV` (`temporal.js:32-78`).
-- [ ] 4.2 Add `temporalIngest(rows)` owning `_tempData`/`_tempEmpConf`/`#temp-*` state + render.
-- [ ] 4.3 Update `r2.js` to call `temporalIngest(rows)` (guarded `typeof fn === 'function'`) instead of direct state/DOM writes.
-- [ ] 4.4 Replace `temporal.js`'s `EMP_COLORS` with `TOKENS.companySeriesColors`.
-- [ ] 4.5 Manual check: no `tempLoadCSV` reference errors; Temporal sub-tab renders.
+- [x] 4.1 Delete `tempLoadCSV` (`temporal.js:32-78`).
+- [x] 4.2 Add `temporalIngest(rows)` owning `_tempData`/`_tempEmpConf`/`#temp-*` state + render.
+- [x] 4.3 Update `r2.js` to call `temporalIngest(rows)` (guarded `typeof fn === 'function'`) instead of direct state/DOM writes.
+- [x] 4.4 Replace `temporal.js`'s `EMP_COLORS` with `TOKENS.companySeriesColors`.
+- [x] 4.5 Manual check: no `tempLoadCSV` reference errors; Temporal sub-tab renders.
 
 ## Phase 5: gps.js — Palette Consolidation
 
-- [ ] 5.1 Confirm `gpsSetStats(rows)` builds `statsData`, invoked from the shared r2.js load path.
-- [ ] 5.2 Replace `BSP_COLORS_GSE/EDAD` + `EST_*_COLORS` with `TOKENS.segmentColors`.
-- [ ] 5.3 Add empresa-filter role banner comment on `onEmpresaChange`.
-- [ ] 5.4 Manual check: `#gps-empresa-sel` filters map routes; no console errors.
+- [x] 5.1 Confirm `gpsSetStats(rows)` builds `statsData`, invoked from the shared r2.js load path.
+- [x] 5.2 Replace `BSP_COLORS_GSE/EDAD` + `EST_*_COLORS` with `TOKENS.segmentColors`.
+- [x] 5.3 Add empresa-filter role banner comment on `onEmpresaChange`.
+- [x] 5.4 Manual check: `#gps-empresa-sel` filters map routes; no console errors.
 
 ## Phase 6: comparativas.js — Split + Tokenize + Cleanup
 

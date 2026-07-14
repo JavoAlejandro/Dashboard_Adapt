@@ -22,59 +22,38 @@ let _tempEmpConf = [];        // [{account_id, color}]
 const DIAS_ORDER = ['Lunes','Martes','Miercoles','Jueves','Viernes','Sabado','Domingo'];
 const MESES_LBL  = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
-// Color palette for companies (cycles if > 10)
-const EMP_COLORS = [
-  '#f5a623','#4af0a0','#7c3aed','#2563eb','#e11d48',
-  '#0891b2','#16a34a','#f97316','#a855f7','#84cc16',
-];
+// ── empresa-source ingest target ────────────────────────────────────────────
+// Called by r2.js's _empresaSourceIngest(rows) (guarded with a `typeof`
+// check there, since temporal.js loads after r2.js). Owns every write to this
+// file's own state (_tempData, _tempEmpConf) and DOM (#temp-empresa-sel,
+// #temp-filters) instead of having r2.js reach in from outside — that
+// encapsulation is the point of this interface. Returns counts so the caller
+// (which alone knows the load `label`) can build its own status text.
+function temporalIngest(rows) {
+  _tempData = rows.filter(r => r.owner_id != null && r.mes != null);
 
-// ── LOAD CSV ─────────────────────────────────────────────────────────────────
-function tempLoadCSV(ev) {
-  const file = ev.target.files[0];
-  if (!file) return;
-  const statusEl = document.getElementById('temp-csv-status');
-  statusEl.textContent = '⏳ Procesando…';
+  // Build empresa config
+  const emps = [...new Set(_tempData.map(r => String(r.account_id ?? r.owner_id)))].sort();
+  _tempEmpConf = emps.map((id, i) => ({
+    id, color: TOKENS.companySeriesColors[i % TOKENS.companySeriesColors.length],
+  }));
 
-  Papa.parse(file, {
-    header: true,
-    dynamicTyping: true,
-    skipEmptyLines: true,
-    complete({ data: rows }) {
-      // Validate required columns
-      const required = ['owner_id', 'mes', 'total_ph'];
-      const cols = Object.keys(rows[0] || {});
-      const missing = required.filter(c => !cols.includes(c));
-      if (missing.length) {
-        statusEl.textContent = `✗ Columnas faltantes: ${missing.join(', ')}`;
-        return;
-      }
+  // Populate empresa selector
+  const sel = document.getElementById('temp-empresa-sel');
+  if (sel) {
+    sel.innerHTML = '<option value="all">Todas las empresas</option>';
+    emps.forEach(id => {
+      const o = document.createElement('option');
+      o.value = id; o.textContent = id; sel.appendChild(o);
+    });
+  }
 
-      _tempData = rows.filter(r => r.owner_id != null && r.mes != null);
+  const filtersEl = document.getElementById('temp-filters');
+  if (filtersEl) filtersEl.style.display = 'flex';
+  if (typeof tempApplyFilters === 'function') tempApplyFilters();
 
-      const n       = _tempData.length;
-      const nOwners = new Set(_tempData.map(r => r.owner_id)).size;
-      const nEmps   = new Set(_tempData.map(r => r.account_id).filter(Boolean)).size;
-      statusEl.textContent = `✓ ${n.toLocaleString()} registros · ${nOwners} camiones · ${nEmps} empresas`;
-
-      // Build empresa config
-      const emps = [...new Set(_tempData.map(r => String(r.account_id ?? r.owner_id)))].sort();
-      _tempEmpConf = emps.map((id, i) => ({ id, color: EMP_COLORS[i % EMP_COLORS.length] }));
-
-      // Populate empresa selector
-      const sel = document.getElementById('temp-empresa-sel');
-      sel.innerHTML = '<option value="all">Todas las empresas</option>';
-      emps.forEach(id => {
-        const o = document.createElement('option');
-        o.value = id; o.textContent = id; sel.appendChild(o);
-      });
-
-      document.getElementById('temp-filters').style.display = 'flex';
-      tempApplyFilters();
-    },
-    error(e) {
-      statusEl.textContent = '✗ Error al leer CSV: ' + e.message;
-    }
-  });
+  const nOwners = new Set(_tempData.map(r => r.owner_id)).size;
+  return { count: _tempData.length, nOwners };
 }
 
 // ── FILTERS ──────────────────────────────────────────────────────────────────

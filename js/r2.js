@@ -179,8 +179,8 @@ async function r2LoadEmpresa(valor) {
 
   const [rutasRes, impactosRes, h3Res] = await Promise.allSettled([
     r2Fetch(urlRutas),
-    tieneImpactos ? r2Fetch(urlImpactos) : Promise.reject('sin impactos'),
-    tieneImpactos ? r2Fetch(urlH3)       : Promise.reject('sin h3'),
+    tieneImpactos ? fetchParseCsv(urlImpactos) : Promise.reject('sin impactos'),
+    tieneImpactos ? fetchParseCsv(urlH3)       : Promise.reject('sin h3'),
   ]);
 
   // ── GeoJSON ───────────────────────────────────────────────────────────────
@@ -198,16 +198,10 @@ async function r2LoadEmpresa(valor) {
     status.textContent = `✗ No se encontraron rutas: ${msg}`;
   }
 
-  // ── CSV impactos ──────────────────────────────────────────────────────────
+  // ── CSV impactos (fetchParseCsv, core.js) ───────────────────────────────────
   if (impactosRes.status === 'fulfilled') {
     try {
-      const csvText = await impactosRes.value.text();
-      Papa.parse(csvText, {
-        header: true, dynamicTyping: true, skipEmptyLines: true,
-        complete({ data: rows }) {
-          _r2ProcesarImpactos(rows, label, tempStatus);
-        },
-      });
+      _empresaSourceIngest(impactosRes.value, label, tempStatus);
     } catch (err) {
       console.error('[R2] Error cargando impactos:', err);
     }
@@ -215,31 +209,26 @@ async function r2LoadEmpresa(valor) {
     if (tempStatus) tempStatus.textContent = `Sin datos de impactos para ${label}`;
   }
 
-  // ── CSV H3 ────────────────────────────────────────────────────────────────
+  // ── CSV H3 (fetchParseCsv, core.js) ─────────────────────────────────────────
   if (h3Res.status === 'fulfilled') {
     try {
-      const csvText = await h3Res.value.text();
-      Papa.parse(csvText, {
-        header: true, dynamicTyping: true, skipEmptyLines: true,
-        complete({ data: rows }) {
-          const required = ['h3_9', 'owner_id', 'total_ph_hex'];
-          const cols     = Object.keys(rows[0] || {});
-          const missing  = required.filter(c => !cols.includes(c));
-          if (missing.length) {
-            h3Status.textContent = `✗ H3: columnas faltantes: ${missing.join(', ')}`;
-            return;
-          }
-          _h3Data = rows.filter(r => r.h3_9 && r.total_ph_hex != null);
-          const nHex   = new Set(_h3Data.map(r => r.h3_9)).size;
-          const nRutas = new Set(_h3Data.map(r => `${r.owner_id}_${r.dia}_${r.mes}`)).size;
-          h3Status.textContent =
-            `✓ H3: ${_h3Data.length.toLocaleString()} registros · ${nHex.toLocaleString()} hexágonos · ${nRutas.toLocaleString()} rutas`;
-          // Re-dibujar si el toggle está activo
-          if (document.getElementById('h3-overlay-toggle')?.checked) {
-            drawH3Overlay();
-          }
-        },
-      });
+      const rows     = h3Res.value;
+      const required = ['h3_9', 'owner_id', 'total_ph_hex'];
+      const cols     = Object.keys(rows[0] || {});
+      const missing  = required.filter(c => !cols.includes(c));
+      if (missing.length) {
+        h3Status.textContent = `✗ H3: columnas faltantes: ${missing.join(', ')}`;
+      } else {
+        _h3Data = rows.filter(r => r.h3_9 && r.total_ph_hex != null);
+        const nHex   = new Set(_h3Data.map(r => r.h3_9)).size;
+        const nRutas = new Set(_h3Data.map(r => `${r.owner_id}_${r.dia}_${r.mes}`)).size;
+        h3Status.textContent =
+          `✓ H3: ${_h3Data.length.toLocaleString()} registros · ${nHex.toLocaleString()} hexágonos · ${nRutas.toLocaleString()} rutas`;
+        // Re-dibujar si el toggle está activo
+        if (document.getElementById('h3-overlay-toggle')?.checked) {
+          drawH3Overlay();
+        }
+      }
     } catch (err) {
       console.error('[R2] Error cargando H3:', err);
     }
@@ -248,41 +237,25 @@ async function r2LoadEmpresa(valor) {
   }
 }
 
-// ── PROCESAR CSV → statsData + _tempData ──────────────────────────────────
-function _r2ProcesarImpactos(rows, label, tempStatusEl) {
+// ── empresa-source ingest: rows[] → gps stats + estimadores + temporal state ──
+// Fan-out per design.md's Data Flow: gpsSetStats(rows) owns gps.js's statsData;
+// calcEstimadores(rows) builds the estimadores panel; temporalIngest(rows)
+// (guarded — temporal.js loads after this file in index.html) owns temporal.js's
+// own _tempData/_tempEmpConf/#temp-* state and render. r2.js no longer reaches
+// into those files' internals directly.
+function _empresaSourceIngest(rows, label, tempStatusEl) {
   if (!rows.length) return;
 
-  statsData = {};
-  rows.forEach(r => {
-    const id = r.owner_id, dia = r.dia;
-    if (id == null || dia == null) return;
-    if (r.mes != null) statsData[`${id}_${dia}_${r.mes}`] = r;
-    statsData[`${id}_${dia}`] = r;
-  });
+  gpsSetStats(rows);
   calcEstimadores(rows);
 
-  _tempData = rows.filter(r => r.owner_id != null && r.mes != null);
-  const nOwners = new Set(_tempData.map(r => r.owner_id)).size;
-  if (tempStatusEl) {
-    tempStatusEl.textContent =
-      `✓ ${_tempData.length.toLocaleString()} registros · ${nOwners} camiones · ${label}`;
+  if (typeof temporalIngest === 'function') {
+    const { count, nOwners } = temporalIngest(rows);
+    if (tempStatusEl) {
+      tempStatusEl.textContent =
+        `✓ ${count.toLocaleString()} registros · ${nOwners} camiones · ${label}`;
+    }
   }
-
-  const emps = [...new Set(_tempData.map(r => String(r.account_id ?? r.owner_id)))].sort();
-  _tempEmpConf = emps.map((id, i) => ({ id, color: EMP_COLORS[i % EMP_COLORS.length] }));
-
-  const sel = document.getElementById('temp-empresa-sel');
-  if (sel) {
-    sel.innerHTML = '<option value="all">Todas las empresas</option>';
-    emps.forEach(id => {
-      const o = document.createElement('option');
-      o.value = id; o.textContent = id; sel.appendChild(o);
-    });
-  }
-
-  const filtersEl = document.getElementById('temp-filters');
-  if (filtersEl) filtersEl.style.display = 'flex';
-  if (typeof tempApplyFilters === 'function') tempApplyFilters();
 
   const busSel = document.getElementById('gps-bus-sel');
   if (busSel?.value && busSel.value !== 'all') {
