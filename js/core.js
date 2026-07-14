@@ -13,13 +13,13 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ── TOKENS ───────────────────────────────────────────────────────────────────
-// Seeded verbatim from current values as of the restructure-empresa-panel
-// refactor (source lines cited per value). Consuming files (comparativas.js,
-// gps.js, temporal.js) still hold their own local copies until their own
-// phase of the refactor lands — this object is the future single source, not
-// yet wired as a runtime replacement everywhere.
+// Seeded verbatim from the pre-refactor values (source lines cited per value,
+// historical). Single source of truth: gps.js, temporal.js and comparativas.js
+// all read TOKENS directly (their former local color copies were removed as
+// each file's refactor phase landed).
 const TOKENS = Object.freeze({
-  // comparativas.js:18-19 (EMP_A / EMP_B)
+  // Formerly comparativas.js EMP_A / EMP_B (dropped in Phase 6 — this object
+  // is now the sole source; comparativas.js reads TOKENS.empresaA/B directly)
   empresaA: '#e8a020',   // dorado
   empresaB: '#4a6fa5',   // azul slate
   // css/styles.css :root --emp-a-soft / --emp-b-soft (documented fallback pair)

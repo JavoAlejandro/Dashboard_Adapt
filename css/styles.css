@@ -678,12 +678,25 @@ select.pal-sel {
 /* ── EMPRESA COMPARISON GRID ──────────────────────────────────────────────── */
 /* ── COMPARATIVAS DE EMPRESA ─────────────────────────────────────────────── */
 
+/* JS (js/core.js TOKENS.empresaA/B) is the authoritative source; these are the
+   documented static fallback shown before/if js/core.js's _injectTokenVars()
+   runs. Keep numerically identical to TOKENS.empresaA/B(+Soft) to avoid any
+   flash-of-wrong-color. Intentionally a literal (not var(--accent)) — --emp-a
+   currently shares --accent's hex by coincidence, not by design coupling. */
 :root {
-  --emp-a: var(--accent);
+  --emp-a: #e8a020;
   --emp-b: #4a6fa5;
   --emp-a-soft: rgba(232,160,32,0.07);
   --emp-b-soft: rgba(74,111,165,0.07);
 }
+
+/* data-side hooks for empresa-compare metric grid cells
+   (js/comparativas.js _empresaCompareRender) — color-only; structural
+   properties (font, layout, stroke-width) stay inline in JS. */
+.cmp-metric-hdr[data-side="a"] { color: var(--emp-a); }
+.cmp-metric-hdr[data-side="b"] { color: var(--emp-b); }
+.cmp-metric-val[data-side="a"] { -webkit-text-stroke-color: var(--emp-a); text-stroke-color: var(--emp-a); }
+.cmp-metric-val[data-side="b"] { -webkit-text-stroke-color: var(--emp-b); text-stroke-color: var(--emp-b); }
 
 .emp-cmp-grid {
   display: grid;

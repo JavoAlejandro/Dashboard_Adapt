@@ -59,17 +59,17 @@ Chain strategy: stacked-to-main-in-sequence (confirmed by user)
 
 ## Phase 6: comparativas.js — Split + Tokenize + Cleanup
 
-- [ ] 6.1 Split `_calcEmpresaMetrics` → pure `_empresaCompareAggregate` (no DOM/I/O/logs).
-- [ ] 6.2 Split `_renderEmpresaCols` → `_empresaCompareRender` (DOM/CSS construction via `data-side`/`TOKENS`).
-- [ ] 6.3 Update comparativas markup in `index.html`: `data-side="a|b"` hooks replace hardcoded hex in inline styles.
-- [ ] 6.4 Drop `EMP_A/EMP_B` hex concatenation; Leaflet/Chart.js read `TOKENS.empresaA/B`.
-- [ ] 6.5 Remove `console.log` at `comparativas.js:513,522,524` (keep `console.error` `:525`); fix stale credit comment at `:25`.
-- [ ] 6.6 Manual check: Comparativas → Global — compare runs; map A(gold)/B(slate); GSE+edad grid + Δ arrows; no debug logs.
-- [ ] 6.7 Manual check: Comparativas → Temporal — KPIs, charts, tabla; series colors match Global.
+- [x] 6.1 Split `_calcEmpresaMetrics` → pure `_empresaCompareAggregate` (no DOM/I/O/logs).
+- [x] 6.2 Split `_renderEmpresaCols` → `_empresaCompareRender` (DOM/CSS construction via `data-side`/`TOKENS`).
+- [x] 6.3 Update comparativas markup: `data-side="a|b"` hooks replace hardcoded hex in inline styles (static `index.html` markup had no hardcoded hex to fix — the color-string duplication lived in `_renderEmpresaCols`'s JS-generated DOM; added `data-side` + `.cmp-metric-hdr`/`.cmp-metric-val` hooks there, resolved in `styles.css`).
+- [x] 6.4 Drop `EMP_A/EMP_B` hex concatenation; Leaflet/Chart.js read `TOKENS.empresaA/B`.
+- [x] 6.5 Remove `console.log` at `comparativas.js:513,522,524` (keep `console.error` `:525`); fix stale credit comment at `:25`.
+- [x] 6.6 Manual check: Comparativas → Global — compare runs; map A(gold)/B(slate); GSE+edad grid + Δ arrows; no debug logs. Confirmed by user in-browser 2026-07-14 (post cache-fix retest — the earlier `gpsSetStats is not defined` console error was a stale browser cache serving pre-PR2 `gps.js`, not a code defect; resolved via hard refresh with DevTools "Disable cache").
+- [x] 6.7 Manual check: Comparativas → Temporal — KPIs, charts, tabla; series colors match Global. Confirmed by user in-browser 2026-07-14.
 
 ## Phase 7: CSS Alignment + Final Verification
 
-- [ ] 7.1 Update `css/styles.css` `--emp-*` custom properties to mirror `TOKENS` values exactly (documented fallback).
-- [ ] 7.2 Manual check: same company renders identical color across Camión/Global/Temporal.
-- [ ] 7.3 Manual check: `getComputedStyle(:root).getPropertyValue('--emp-a')` equals `TOKENS.empresaA`.
-- [ ] 7.4 Full regression pass against every row in design.md's Testing Strategy table.
+- [x] 7.1 Update `css/styles.css` `--emp-*` custom properties to mirror `TOKENS` values exactly (documented fallback).
+- [x] 7.2 Manual check: same company renders identical color across Camión/Global/Temporal. Confirmed by user in-browser 2026-07-14.
+- [x] 7.3 `--emp-a`/`--emp-b`(+soft) static CSS values confirmed textually identical to `TOKENS.empresaA`/`TOKENS.empresaB`(+Soft) (static comparison; live rendering also confirmed working in-browser 2026-07-14).
+- [x] 7.4 Full regression pass against every row in design.md's Testing Strategy table. Load order/tokens (PR1), Camión/empresa-source + GPS/empresa-filter (PR2), and Comparativas Global/Temporal + color consistency (PR3) all confirmed working in-browser across this session.

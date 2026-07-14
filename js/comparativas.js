@@ -14,15 +14,15 @@ function switchCmpSubTab(name, btn) {
 
 'use strict';
 
-// Colores de empresa A/B — sincronizados con styles.css :root vars
-const EMP_A = '#e8a020';   // --emp-a: dorado
-const EMP_B = '#4a6fa5';   // --emp-b: azul slate
+// Colores de empresa A/B — TOKENS.empresaA/B (core.js) es la fuente única;
+// CSS vars --emp-a/--emp-b (styles.css) reflejan los mismos valores.
 
 // ══════════════════════════════════════════════════════════════════════════
 // COMPARATIVAS TAB
 // Handles camión-vs-camión and empresa-vs-empresa comparisons
 // Depends on: gpsLayers, gpsData, statsData, mesKey (from gps.js)
-//             BSP_SEG_KEYS, BSP_SEG_LABELS, BSP_COLORS (from impactos.js)
+//             BSP_SEG_KEYS, BSP_SEG_LABELS, BSP_COLORS (from gps.js)
+//             TOKENS, r2Fetch, fetchParseCsv (from core.js)
 // ══════════════════════════════════════════════════════════════════════════
 
 const HIDE_CAMION_VS_CAMION = true;  // Set false to re-enable camion comparison
@@ -252,8 +252,8 @@ function runComparativa() {
   const entA = gpsLayers[cmpIdA];
   const entB = gpsLayers[cmpIdB];
 
-  cmpLayerA = L.polyline(entA.coords, { color: EMP_A, weight: 4, opacity: 0.9 }).addTo(cmpMap);
-  cmpLayerB = L.polyline(entB.coords, { color: EMP_B, weight: 4, opacity: 0.9 }).addTo(cmpMap);
+  cmpLayerA = L.polyline(entA.coords, { color: TOKENS.empresaA, weight: 4, opacity: 0.9 }).addTo(cmpMap);
+  cmpLayerB = L.polyline(entB.coords, { color: TOKENS.empresaB, weight: 4, opacity: 0.9 }).addTo(cmpMap);
 
   const mkr = (ll, color, lbl) => {
     cmpOverlays.push(
@@ -261,10 +261,10 @@ function runComparativa() {
         .addTo(cmpMap).bindTooltip(lbl)
     );
   };
-  mkr(entA.coords[0],                    EMP_A, 'Inicio A');
-  mkr(entA.coords[entA.coords.length-1], EMP_A, 'Fin A');
-  mkr(entB.coords[0],                    EMP_B, 'Inicio B');
-  mkr(entB.coords[entB.coords.length-1], EMP_B, 'Fin B');
+  mkr(entA.coords[0],                    TOKENS.empresaA, 'Inicio A');
+  mkr(entA.coords[entA.coords.length-1], TOKENS.empresaA, 'Fin A');
+  mkr(entB.coords[0],                    TOKENS.empresaB, 'Inicio B');
+  mkr(entB.coords[entB.coords.length-1], TOKENS.empresaB, 'Fin B');
 
   cmpMap.fitBounds(L.latLngBounds([...entA.coords, ...entB.coords]), { padding: [40, 40] });
   setTimeout(() => cmpMap.invalidateSize(), 200);
@@ -277,8 +277,8 @@ function runComparativa() {
   if (_panel) { _panel.innerHTML = ''; _panel.style.display = 'none'; }
 
   _renderCmpCols(
-    { label: lA, vals: _avgStatsForIds([cmpIdA]), color: EMP_A, n: null },
-    { label: lB, vals: _avgStatsForIds([cmpIdB]), color: EMP_B, n: null }
+    { label: lA, vals: _avgStatsForIds([cmpIdA]), color: 'var(--emp-a)', n: null },
+    { label: lB, vals: _avgStatsForIds([cmpIdB]), color: 'var(--emp-b)', n: null }
   );
 
   const animBar = document.getElementById('cmp-anim-bar');
@@ -318,22 +318,22 @@ function runComparativaEmpresas() {
 
   const allCoords = [];
   idsA.forEach(id => {
-    const l = L.polyline(gpsLayers[id].coords, { color: EMP_A, weight: 2, opacity: 0.4 }).addTo(cmpMap);
+    const l = L.polyline(gpsLayers[id].coords, { color: TOKENS.empresaA, weight: 2, opacity: 0.4 }).addTo(cmpMap);
     cmpOverlays.push(l); allCoords.push(...gpsLayers[id].coords);
   });
   idsB.forEach(id => {
-    const l = L.polyline(gpsLayers[id].coords, { color: EMP_B, weight: 2, opacity: 0.4 }).addTo(cmpMap);
+    const l = L.polyline(gpsLayers[id].coords, { color: TOKENS.empresaB, weight: 2, opacity: 0.4 }).addTo(cmpMap);
     cmpOverlays.push(l); allCoords.push(...gpsLayers[id].coords);
   });
 
   if (allCoords.length) cmpMap.fitBounds(L.latLngBounds(allCoords), { padding: [30, 30] });
   setTimeout(() => cmpMap.invalidateSize(), 200);
 
-  // Compute metrics for each empresa
-  const metricsA = _calcEmpresaMetrics(idsA);
-  const metricsB = _calcEmpresaMetrics(idsB);
+  // Compute metrics for each empresa (pure aggregation, no DOM/I/O)
+  const metricsA = _empresaCompareAggregate(idsA);
+  const metricsB = _empresaCompareAggregate(idsB);
 
-  _renderEmpresaCols(empA, metricsA, idsA.length, empB, metricsB, idsB.length);
+  _empresaCompareRender(empA, metricsA, idsA.length, empB, metricsB, idsB.length);
 
   const animBar = document.getElementById('cmp-anim-bar');
   if (animBar) animBar.style.display = 'none';
@@ -347,8 +347,11 @@ function runComparativaEmpresas() {
   _kpiUpdateGrids();
 }
 
-// ── Empresa metrics calculation ───────────────────────────────────────────
-function _calcEmpresaMetrics(ids) {
+// ── Empresa metrics aggregation ───────────────────────────────────────────
+// PURE: statistical aggregation only — no DOM access, no I/O, no logging.
+// Reads in-memory globals (gpsLayers, statsData) already loaded by the
+// empresa-source/empresa-filter pipeline; consumed by _empresaCompareRender.
+function _empresaCompareAggregate(ids) {
   // 1. p/h promedio POR CAMIÓN/DÍA
   //    Para cada par (owner_id, dia, mes) → calcula su p/h
   //    Luego promedia esos valores por camión (media de sus días)
@@ -510,18 +513,18 @@ function _calcEmpresaMetrics(ids) {
     : null;
 
   const result = { avgPH, avgDias, avgStays, avgGseProp, avgEdadProp, nCamiones, nRoutes: ids.length, phCount };
-  console.log('Empresa metrics:', result);
   return result;
 }
 
 // ── Render empresa comparison panel ──────────────────────────────────────
-function _renderEmpresaCols(nameA, mA, nA, nameB, mB, nB) {
+// DOM/CSS construction only — consumes the pure _empresaCompareAggregate()
+// output. Colors are sourced from TOKENS (literal hex, e.g. Chart.js/Leaflet)
+// or via data-side="a|b" hooks resolved in css/styles.css against --emp-a/-b.
+function _empresaCompareRender(nameA, mA, nA, nameB, mB, nB) {
   // Build side objects for unified access in GSE/edad section
-  const sideA = { label: nameA, ...mA, n: nA, color: EMP_A };
-  const sideB = { label: nameB, ...mB, n: nB, color: EMP_B };
-  console.log('_renderEmpresaCols called:', nameA, mA, nameB, mB);
+  const sideA = { label: nameA, ...mA, n: nA, color: 'var(--emp-a)' };
+  const sideB = { label: nameB, ...mB, n: nB, color: 'var(--emp-b)' };
   const panel = document.getElementById('cmp-panel-emp');
-  console.log('cmp-panel element:', panel ? 'found, display='+panel.style.display : 'NOT FOUND');
   if (!panel) { console.error('cmp-panel NOT FOUND in DOM'); return; }
 
   const fmtPH = v => v == null ? '—' : v.toFixed(1) + ' p/h·día';
@@ -554,35 +557,43 @@ function _renderEmpresaCols(nameA, mA, nA, nameB, mB, nB) {
   // Column headers row
   const hdrRow = _mkRow(grid, true);
   _mkCell(hdrRow, '', 'flex:2;background:var(--ink);color:var(--bg)');
-  const hA = _mkCell(hdrRow, nameA, 'flex:1;background:var(--ink);color:#e8a020;font-family:Syne,sans-serif;font-weight:800;font-size:13px');
+  const hA = _mkCell(hdrRow, nameA, 'flex:1;background:var(--ink);font-family:Syne,sans-serif;font-weight:800;font-size:13px');
+  hA.classList.add('cmp-metric-hdr'); hA.dataset.side = 'a';
   hA.innerHTML += '<br><span style="font-family:Syne Mono,monospace;font-size:9px;color:#aaa;font-weight:400">' + mA.nCamiones + ' camiones · ' + nA + ' camiones día</span>';
   _mkCell(hdrRow, 'Δ', 'width:60px;background:var(--ink);color:var(--bg);text-align:center;font-family:Syne Mono,monospace;font-size:11px');
-  const hB = _mkCell(hdrRow, nameB, 'flex:1;background:var(--ink);color:#4a6fa5;font-family:Syne,sans-serif;font-weight:800;font-size:13px');
+  const hB = _mkCell(hdrRow, nameB, 'flex:1;background:var(--ink);font-family:Syne,sans-serif;font-weight:800;font-size:13px');
+  hB.classList.add('cmp-metric-hdr'); hB.dataset.side = 'b';
   hB.innerHTML += '<br><span style="font-family:Syne Mono,monospace;font-size:9px;color:#aaa;font-weight:400">' + mB.nCamiones + ' camiones · ' + nB + ' camiones día</span>';
 
   // Row 1: p/h
   const r1 = _mkRow(grid, false);
   const lbl1 = _mkCell(r1, 'Personas / hora por camión / día', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl1.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Promedio de p/h por día de operación, promediado entre camiones — ' + mA.phCount + ' / ' + mB.phCount + ' días con datos</span>';
-  const v1a = _mkCell(r1, fmtPH(mA.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_A + ';text-stroke:2px ' + EMP_A + ';line-height:1');
+  const v1a = _mkCell(r1, fmtPH(mA.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke-width:2px;line-height:1');
+  v1a.classList.add('cmp-metric-val'); v1a.dataset.side = 'a';
   _mkDeltaCell(r1, mA.avgPH, mB.avgPH);
-  _mkCell(r1, fmtPH(mB.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_B + ';text-stroke:2px ' + EMP_B + ';line-height:1');
+  const v1b = _mkCell(r1, fmtPH(mB.avgPH), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke-width:2px;line-height:1');
+  v1b.classList.add('cmp-metric-val'); v1b.dataset.side = 'b';
 
   // Row 2: días
   const r2 = _mkRow(grid, false);
   const lbl2 = _mkCell(r2, 'Días de datos por camión', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl2.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Promedio de días únicos por camión</span>';
-  _mkCell(r2, fmtD(mA.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_A + ';text-stroke:2px ' + EMP_A + ';line-height:1');
+  const v2a = _mkCell(r2, fmtD(mA.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke-width:2px;line-height:1');
+  v2a.classList.add('cmp-metric-val'); v2a.dataset.side = 'a';
   _mkDeltaCell(r2, mA.avgDias, mB.avgDias);
-  _mkCell(r2, fmtD(mB.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_B + ';text-stroke:2px ' + EMP_B + ';line-height:1');
+  const v2b = _mkCell(r2, fmtD(mB.avgDias), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke-width:2px;line-height:1');
+  v2b.classList.add('cmp-metric-val'); v2b.dataset.side = 'b';
 
   // Row 3: stays
   const r3 = _mkRow(grid, false);
   const lbl3 = _mkCell(r3, 'Stays por camión / día', 'flex:2;font-family:Syne,sans-serif;font-weight:600;font-size:13px;color:var(--ink)');
   lbl3.innerHTML += '<br><span style="font-size:9px;color:var(--muted);font-family:Syne Mono,monospace">Paradas promedio por día de operación, promediado entre camiones</span>';
-  _mkCell(r3, fmtS(mA.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_A + ';text-stroke:2px ' + EMP_A + ';line-height:1');
+  const v3a = _mkCell(r3, fmtS(mA.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke-width:2px;line-height:1');
+  v3a.classList.add('cmp-metric-val'); v3a.dataset.side = 'a';
   _mkDeltaCell(r3, mA.avgStays, mB.avgStays);
-  _mkCell(r3, fmtS(mB.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke:2px ' + EMP_B + ';text-stroke:2px ' + EMP_B + ';line-height:1');
+  const v3b = _mkCell(r3, fmtS(mB.avgStays), 'flex:1;font-family:Syne,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.02em;color:var(--bg);-webkit-text-stroke-width:2px;line-height:1');
+  v3b.classList.add('cmp-metric-val'); v3b.dataset.side = 'b';
 
   // ── GSE + Edad section ──────────────────────────────────────────────
   if (sideA.avgGseProp || sideB.avgGseProp) {
@@ -611,8 +622,8 @@ function _renderEmpresaCols(nameA, mA, nA, nameB, mB, nB) {
 
     const SEG_LABELS = ['GSE AB','GSE C1a','GSE C2','GSE C3','GSE D','GSE E',
                         '<25','25–34','35–44','45–54','55–64','>65'];
-    const SEG_COLORS = ['#7c3aed','#4f46e5','#2563eb','#0891b2','#059669','#16a34a',
-                        '#f59e0b','#f97316','#ef4444','#ec4899','#a855f7','#6366f1'];
+    // TOKENS.segmentColors.est.{gse,edad} — core.js (estimadores panel palette)
+    const SEG_COLORS = [...TOKENS.segmentColors.est.gse, ...TOKENS.segmentColors.est.edad];
 
     // Combine GSE + edad into one 12-element array
     const valsA = [
@@ -632,9 +643,11 @@ function _renderEmpresaCols(nameA, mA, nA, nameB, mB, nB) {
     // Header row
     const segHdr = _mkRow(segGrid, true);
     _mkCell(segHdr, 'Segmento', 'flex:1.4;background:var(--ink);color:var(--bg);font-family:Syne Mono,monospace;font-size:10px;letter-spacing:0.08em');
-    _mkCell(segHdr, sideA.label, 'flex:2;background:var(--ink);color:' + EMP_A + ';font-family:Syne,sans-serif;font-weight:700;font-size:12px');
+    const segHdrA = _mkCell(segHdr, sideA.label, 'flex:2;background:var(--ink);font-family:Syne,sans-serif;font-weight:700;font-size:12px');
+    segHdrA.classList.add('cmp-metric-hdr'); segHdrA.dataset.side = 'a';
     _mkCell(segHdr, 'Δ', 'width:60px;background:var(--ink);color:var(--bg);text-align:center;font-family:Syne Mono,monospace;font-size:11px');
-    _mkCell(segHdr, sideB.label, 'flex:2;background:var(--ink);color:' + EMP_B + ';font-family:Syne,sans-serif;font-weight:700;font-size:12px');
+    const segHdrB = _mkCell(segHdr, sideB.label, 'flex:2;background:var(--ink);font-family:Syne,sans-serif;font-weight:700;font-size:12px');
+    segHdrB.classList.add('cmp-metric-hdr'); segHdrB.dataset.side = 'b';
 
     valsA.forEach((va, i) => {
       // Separator between GSE and edad
@@ -741,7 +754,7 @@ function _mkDeltaCell(row, a, b) {
   const cell = _mkCell(row, '', 'width:80px;text-align:center;font-family:Syne Mono,monospace;font-size:12px;align-items:center;font-weight:600');
   if (a == null || b == null) { cell.textContent = '—'; return cell; }
   const d = a - b;
-  const color = d > 0.05 ? '#f59e0b' : d < -0.05 ? EMP_B : '#8a867e';
+  const color = d > 0.05 ? '#f59e0b' : d < -0.05 ? 'var(--emp-b)' : '#8a867e';
   const span = document.createElement('span');
   span.style.color = color;
   span.style.fontWeight = '700';
@@ -754,7 +767,7 @@ function _mkDeltaCell(row, a, b) {
 function _cmpDelta(a, b, decimals) {
   if (a == null || b == null) return '<span style="color:var(--muted)">—</span>';
   const d = a - b;
-  const color = d > 0 ? '#f59e0b' : d < 0 ? EMP_B : 'var(--muted)';
+  const color = d > 0 ? '#f59e0b' : d < 0 ? 'var(--emp-b)' : 'var(--muted)';
   return `<span style="color:${color};font-weight:700">${d > 0 ? '+' : ''}${d.toFixed(decimals)}</span>`;
 }
 
@@ -843,7 +856,7 @@ function _renderCmpCols(sideA, sideB) {
       el.innerHTML = '<span style="color:var(--muted)">—</span>';
     } else {
       const span = document.createElement('span');
-      span.style.color = diff > 0 ? '#f59e0b' : diff < 0 ? EMP_B : 'var(--muted)';
+      span.style.color = diff > 0 ? '#f59e0b' : diff < 0 ? 'var(--emp-b)' : 'var(--muted)';
       span.textContent = (diff > 0 ? '+' : '') + diff.toFixed(1);
       el.appendChild(span);
     }
@@ -866,8 +879,8 @@ function _renderCmpCols(sideA, sideB) {
       data: {
         labels: BSP_SEG_LABELS,
         datasets: [
-          { label: sideA.label, data: sideA.vals.map(v => v || 0), backgroundColor: EMP_A + 'bb', borderRadius: 3 },
-          { label: sideB.label, data: sideB.vals.map(v => v || 0), backgroundColor: EMP_B + 'bb', borderRadius: 3 },
+          { label: sideA.label, data: sideA.vals.map(v => v || 0), backgroundColor: TOKENS.empresaA + 'bb', borderRadius: 3 },
+          { label: sideB.label, data: sideB.vals.map(v => v || 0), backgroundColor: TOKENS.empresaB + 'bb', borderRadius: 3 },
         ]
       },
       options: {
@@ -889,8 +902,8 @@ function _renderCmpCols(sideA, sideB) {
 function renderComparePanel(idA, idB) {
   if (!gpsLayers[idA] || !gpsLayers[idB]) return;
   _renderCmpCols(
-    { label: _fmtCamionLabel(gpsLayers[idA].feature.properties), vals: _avgStatsForIds([idA]), color: EMP_A },
-    { label: _fmtCamionLabel(gpsLayers[idB].feature.properties), vals: _avgStatsForIds([idB]), color: EMP_B }
+    { label: _fmtCamionLabel(gpsLayers[idA].feature.properties), vals: _avgStatsForIds([idA]), color: 'var(--emp-a)' },
+    { label: _fmtCamionLabel(gpsLayers[idB].feature.properties), vals: _avgStatsForIds([idB]), color: 'var(--emp-b)' }
   );
 }
 
