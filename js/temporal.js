@@ -22,59 +22,97 @@ let _tempEmpConf = [];        // [{account_id, color}]
 const DIAS_ORDER = ['Lunes','Martes','Miercoles','Jueves','Viernes','Sabado','Domingo'];
 const MESES_LBL  = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
-// Color palette for companies (cycles if > 10)
-const EMP_COLORS = [
-  '#f5a623','#4af0a0','#7c3aed','#2563eb','#e11d48',
-  '#0891b2','#16a34a','#f97316','#a855f7','#84cc16',
-];
+// ── FLOTA REFERENCE (additive, non-blocking) ────────────────────────────────
+// Fleet-wide percentile reference (flota/percentiles_referencia.csv) and each
+// company's percentile rank within it (flota/percentiles_empresa.csv).
+// Fetched via core.js's fetchParseCsv, deliberately NOT routed through
+// temporalIngest(rows) — this is fleet-wide reference data, a different
+// shape/lifecycle than the per-company row ingest temporalIngest owns.
+// Degrades silently (empty Maps, no thrown/console.error) when either CSV is
+// absent/404 — the expected state until the user manually uploads them to R2.
+const FLOTA_REF_PATH = 'flota/percentiles_referencia.csv';
+const FLOTA_EMP_PATH = 'flota/percentiles_empresa.csv';
 
-// ── LOAD CSV ─────────────────────────────────────────────────────────────────
-function tempLoadCSV(ev) {
-  const file = ev.target.files[0];
-  if (!file) return;
-  const statusEl = document.getElementById('temp-csv-status');
-  statusEl.textContent = '⏳ Procesando…';
+let _flotaRef = new Map();   // "${mes}|${metrica}" → {p10,p25,p50,p75,p90,n_empresas}
+let _flotaEmp = new Map();   // "${account_id}|${mes}|${metrica}" → {valor, percentil}
 
-  Papa.parse(file, {
-    header: true,
-    dynamicTyping: true,
-    skipEmptyLines: true,
-    complete({ data: rows }) {
-      // Validate required columns
-      const required = ['owner_id', 'mes', 'total_ph'];
-      const cols = Object.keys(rows[0] || {});
-      const missing = required.filter(c => !cols.includes(c));
-      if (missing.length) {
-        statusEl.textContent = `✗ Columnas faltantes: ${missing.join(', ')}`;
-        return;
-      }
-
-      _tempData = rows.filter(r => r.owner_id != null && r.mes != null);
-
-      const n       = _tempData.length;
-      const nOwners = new Set(_tempData.map(r => r.owner_id)).size;
-      const nEmps   = new Set(_tempData.map(r => r.account_id).filter(Boolean)).size;
-      statusEl.textContent = `✓ ${n.toLocaleString()} registros · ${nOwners} camiones · ${nEmps} empresas`;
-
-      // Build empresa config
-      const emps = [...new Set(_tempData.map(r => String(r.account_id ?? r.owner_id)))].sort();
-      _tempEmpConf = emps.map((id, i) => ({ id, color: EMP_COLORS[i % EMP_COLORS.length] }));
-
-      // Populate empresa selector
-      const sel = document.getElementById('temp-empresa-sel');
-      sel.innerHTML = '<option value="all">Todas las empresas</option>';
-      emps.forEach(id => {
-        const o = document.createElement('option');
-        o.value = id; o.textContent = id; sel.appendChild(o);
+// Additive fleet-percentile loader. Fire-and-forget from r2.js (never
+// awaited) — must not block/delay KPIs, evolution chart, día-semana chart or
+// tabla, all of which render from temporalIngest's primary path. On success,
+// populates _flotaRef/_flotaEmp and re-runs tempApplyFilters() (if data has
+// already been ingested) so any later consumer (band overlay / period
+// comparison, out of scope for this change) picks the values up without a
+// full page reload. On failure (404/network/parse error) for either file,
+// leaves that Map empty and logs at info level only — never console.error,
+// never throws.
+function temporalLoadFlota() {
+  return Promise.allSettled([
+    fetchParseCsv(FLOTA_REF_PATH),
+    fetchParseCsv(FLOTA_EMP_PATH),
+  ]).then(([refRes, empRes]) => {
+    if (refRes.status === 'fulfilled') {
+      const m = new Map();
+      refRes.value.forEach(r => {
+        if (r.mes == null || r.metrica == null) return;
+        m.set(`${+r.mes}|${r.metrica}`, {
+          p10: +r.p10, p25: +r.p25, p50: +r.p50, p75: +r.p75, p90: +r.p90,
+          n_empresas: +r.n_empresas,
+        });
       });
-
-      document.getElementById('temp-filters').style.display = 'flex';
-      tempApplyFilters();
-    },
-    error(e) {
-      statusEl.textContent = '✗ Error al leer CSV: ' + e.message;
+      _flotaRef = m;
+    } else {
+      console.info('[Temporal] flota/percentiles_referencia.csv no disponible:', refRes.reason?.message || refRes.reason);
     }
+
+    if (empRes.status === 'fulfilled') {
+      const m = new Map();
+      empRes.value.forEach(r => {
+        if (r.account_id == null || r.mes == null || r.metrica == null) return;
+        m.set(`${String(r.account_id)}|${+r.mes}|${r.metrica}`, {
+          valor: +r.valor, percentil: +r.percentil,
+        });
+      });
+      _flotaEmp = m;
+    } else {
+      console.info('[Temporal] flota/percentiles_empresa.csv no disponible:', empRes.reason?.message || empRes.reason);
+    }
+
+    if (_tempData.length && typeof tempApplyFilters === 'function') tempApplyFilters();
   });
+}
+
+// ── empresa-source ingest target ────────────────────────────────────────────
+// Called by r2.js's _empresaSourceIngest(rows) (guarded with a `typeof`
+// check there, since temporal.js loads after r2.js). Owns every write to this
+// file's own state (_tempData, _tempEmpConf) and DOM (#temp-empresa-sel,
+// #temp-filters) instead of having r2.js reach in from outside — that
+// encapsulation is the point of this interface. Returns counts so the caller
+// (which alone knows the load `label`) can build its own status text.
+function temporalIngest(rows) {
+  _tempData = rows.filter(r => r.owner_id != null && r.mes != null);
+
+  // Build empresa config
+  const emps = [...new Set(_tempData.map(r => String(r.account_id ?? r.owner_id)))].sort();
+  _tempEmpConf = emps.map((id, i) => ({
+    id, color: TOKENS.companySeriesColors[i % TOKENS.companySeriesColors.length],
+  }));
+
+  // Populate empresa selector
+  const sel = document.getElementById('temp-empresa-sel');
+  if (sel) {
+    sel.innerHTML = '<option value="all">Todas las empresas</option>';
+    emps.forEach(id => {
+      const o = document.createElement('option');
+      o.value = id; o.textContent = id; sel.appendChild(o);
+    });
+  }
+
+  const filtersEl = document.getElementById('temp-filters');
+  if (filtersEl) filtersEl.style.display = 'flex';
+  if (typeof tempApplyFilters === 'function') tempApplyFilters();
+
+  const nOwners = new Set(_tempData.map(r => r.owner_id)).size;
+  return { count: _tempData.length, nOwners };
 }
 
 // ── FILTERS ──────────────────────────────────────────────────────────────────
