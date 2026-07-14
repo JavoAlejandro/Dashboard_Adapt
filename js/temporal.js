@@ -22,6 +22,65 @@ let _tempEmpConf = [];        // [{account_id, color}]
 const DIAS_ORDER = ['Lunes','Martes','Miercoles','Jueves','Viernes','Sabado','Domingo'];
 const MESES_LBL  = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
+// ── FLOTA REFERENCE (additive, non-blocking) ────────────────────────────────
+// Fleet-wide percentile reference (flota/percentiles_referencia.csv) and each
+// company's percentile rank within it (flota/percentiles_empresa.csv).
+// Fetched via core.js's fetchParseCsv, deliberately NOT routed through
+// temporalIngest(rows) — this is fleet-wide reference data, a different
+// shape/lifecycle than the per-company row ingest temporalIngest owns.
+// Degrades silently (empty Maps, no thrown/console.error) when either CSV is
+// absent/404 — the expected state until the user manually uploads them to R2.
+const FLOTA_REF_PATH = 'flota/percentiles_referencia.csv';
+const FLOTA_EMP_PATH = 'flota/percentiles_empresa.csv';
+
+let _flotaRef = new Map();   // "${mes}|${metrica}" → {p10,p25,p50,p75,p90,n_empresas}
+let _flotaEmp = new Map();   // "${account_id}|${mes}|${metrica}" → {valor, percentil}
+
+// Additive fleet-percentile loader. Fire-and-forget from r2.js (never
+// awaited) — must not block/delay KPIs, evolution chart, día-semana chart or
+// tabla, all of which render from temporalIngest's primary path. On success,
+// populates _flotaRef/_flotaEmp and re-runs tempApplyFilters() (if data has
+// already been ingested) so any later consumer (band overlay / period
+// comparison, out of scope for this change) picks the values up without a
+// full page reload. On failure (404/network/parse error) for either file,
+// leaves that Map empty and logs at info level only — never console.error,
+// never throws.
+function temporalLoadFlota() {
+  return Promise.allSettled([
+    fetchParseCsv(FLOTA_REF_PATH),
+    fetchParseCsv(FLOTA_EMP_PATH),
+  ]).then(([refRes, empRes]) => {
+    if (refRes.status === 'fulfilled') {
+      const m = new Map();
+      refRes.value.forEach(r => {
+        if (r.mes == null || r.metrica == null) return;
+        m.set(`${+r.mes}|${r.metrica}`, {
+          p10: +r.p10, p25: +r.p25, p50: +r.p50, p75: +r.p75, p90: +r.p90,
+          n_empresas: +r.n_empresas,
+        });
+      });
+      _flotaRef = m;
+    } else {
+      console.info('[Temporal] flota/percentiles_referencia.csv no disponible:', refRes.reason?.message || refRes.reason);
+    }
+
+    if (empRes.status === 'fulfilled') {
+      const m = new Map();
+      empRes.value.forEach(r => {
+        if (r.account_id == null || r.mes == null || r.metrica == null) return;
+        m.set(`${String(r.account_id)}|${+r.mes}|${r.metrica}`, {
+          valor: +r.valor, percentil: +r.percentil,
+        });
+      });
+      _flotaEmp = m;
+    } else {
+      console.info('[Temporal] flota/percentiles_empresa.csv no disponible:', empRes.reason?.message || empRes.reason);
+    }
+
+    if (_tempData.length && typeof tempApplyFilters === 'function') tempApplyFilters();
+  });
+}
+
 // ── empresa-source ingest target ────────────────────────────────────────────
 // Called by r2.js's _empresaSourceIngest(rows) (guarded with a `typeof`
 // check there, since temporal.js loads after r2.js). Owns every write to this

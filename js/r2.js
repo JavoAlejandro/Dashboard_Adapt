@@ -257,6 +257,14 @@ function _empresaSourceIngest(rows, label, tempStatusEl) {
     }
   }
 
+  // Additive, non-blocking fleet-percentile reference fetch (flota/*.csv).
+  // temporal.js owns the path constants + _flotaRef/_flotaEmp state and the
+  // loader itself; r2.js only triggers it, same encapsulation boundary as
+  // temporalIngest above — r2.js never reaches into temporal.js's internals.
+  // Fire-and-forget: no `await`, never blocks/delays this function's return
+  // or any of the primary render paths above.
+  if (typeof temporalLoadFlota === 'function') temporalLoadFlota();
+
   const busSel = document.getElementById('gps-bus-sel');
   if (busSel?.value && busSel.value !== 'all') {
     if (typeof showBusStats === 'function') showBusStats(busSel.value);
