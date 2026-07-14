@@ -1187,9 +1187,6 @@ select.pal-sel {
   font-family: 'Syne Mono', monospace; font-size: 9px;
   letter-spacing: 0.06em; color: var(--muted);
 }
-.temp-charts-2col {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-}
 /* Tabla resumen */
 .temp-table {
   width: 100%; border-collapse: collapse;

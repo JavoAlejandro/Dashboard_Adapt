@@ -432,7 +432,7 @@ change and benefits from a stable file to diff against.
 
 ## Work Unit F — CSS (`css/styles.css`)
 
-### F1. Band legend/label styling
+### F1. Band legend/label styling [x]
 - Any label/legend styling needed beyond what Chart.js's built-in legend renders for
   the `"Rango flota (p10–p90)"` / `"Mediana flota (p50)"` datasets (e.g. a small
   caption under the chart clarifying it's a fleet reference, not a company, if the
@@ -441,8 +441,28 @@ change and benefits from a stable file to diff against.
   `design.md` Testing Strategy #1's expected outcome text).
 - Depends on: C1 (needs to know the final dataset/label shape before styling).
 - Parallel: yes (independent of D's table styling).
+- **Verification note (2026-07-14)**: no new CSS was added — the Chart.js legend
+  (`_renderEvolChart`, `js/temporal.js:349-363`) is drawn entirely on the `<canvas>`
+  itself via the Filler/legend plugin, styled only through JS `plugins.legend.labels`
+  config (`_chartDefaults()`); there is no DOM/CSS hook for canvas-rendered legend
+  text, so "CSS-side polish" of the legend text itself is not possible by
+  construction. Checked the two candidates this task called out: (a) the legend
+  labels (`FLOTA_BAND_LABEL`/`FLOTA_MEDIAN_LABEL`) are already distinct enough,
+  paired with `#temp-chart1-sub`'s existing subtitle text (`"{metrica} — promedio
+  por {dim}"`, `js/temporal.js:336-337`) to read as a fleet reference, not a company
+  — no separate caption element exists in `index.html` and this work unit is
+  constrained to CSS-only (no new HTML), so a new explanatory caption was out of
+  scope by the task's own constraint; (b) container spacing — `.temp-chart-card`
+  (padding `18px 20px`) and `.temp-chart-header` (`margin-bottom:14px`) are
+  unchanged and already provide adequate breathing room above the canvas; Chart.js
+  reflows its own internal legend rows (`responsive:true`) when the band adds up to
+  3 extra legend entries, which is internal canvas layout, not a CSS concern. No
+  duplicate/conflicting rule risk since nothing was added. Visual confirmation that
+  spacing "feels right" with the band actually drawn still needs the user's eyes
+  once `flota/percentiles_referencia.csv` is live in R2 (band currently renders
+  zero-dataset in the real environment, same degraded state as Work Units B/C).
 
-### F2. Period-comparison table + delta polarity coloring
+### F2. Period-comparison table + delta polarity coloring [x]
 - Table styling for `#temp-periodo-cmp` — reuse `.temp-table`'s existing conventions
   (`css/styles.css:1194-1210`: header/row/`td-num`/`td-accent` patterns) rather than
   inventing a parallel table style from scratch.
@@ -453,6 +473,38 @@ change and benefits from a stable file to diff against.
   same-period zero state).
 - Depends on: D2 (needs the final cell/class structure `_renderPeriodoCmp` emits).
 - Parallel: yes (independent of F1).
+- **Verification note (2026-07-14)**: no new CSS was added — `_renderPeriodoCmp`
+  (`js/temporal.js:514-598`) already emits `<table class="temp-table">` and
+  `<span class="cmp-delta ${deltaCls}">` (`deltaCls` ∈ `pos`/`neg`/`neu`), reusing
+  the exact classes this task's "or reuse `td-accent`-style naming" alternative
+  calls for, superseding the "two new utility classes" option — confirmed by the
+  user in-browser as already rendering correctly ("el selector de dos meses
+  despliega la tabla comparativa"). Traced every class the markup references
+  against `css/styles.css` to confirm no typo/missing selector:
+  `.temp-table`/`.temp-table th`/`.temp-table td`/`.td-num` all exist
+  (`css/styles.css:1193-1210`); `.cmp-delta`/`.pos`/`.neg`/`.neu` exist and, per
+  cascade order (the later of two definitions in the file wins — see below), the
+  effective runtime style is `css/styles.css:895-907` (`font-size:10px`,
+  `padding:2px 6px`, `border-radius:3px`, `min-width:44px`, `white-space:nowrap`,
+  `pos`=`#2d7a4f` green, `neg`=`#b33a3a` red, `neu`=muted), which is legible against
+  both the white/near-white `.temp-table` row background and the even-row tint
+  (`css/styles.css:1208`). The two `<select>` elements (`#temp-periodo-a/b`) use the
+  same `.gps-select`/`.ctrl-lbl`/`.gps-filters` classes as `#temp-empresa-sel`/
+  `#temp-metrica-sel`/`#temp-dim-sel` — confirmed identical spacing/appearance
+  convention, no override needed. **Pre-existing finding, not fixed (out of scope,
+  flagged only)**: `css/styles.css` defines `.cmp-delta`/`.pos`/`.neg`/`.neu` twice
+  — once at lines 333-339 (older/unused-looking values: `#e6f4ea`/`#fde8e8`/
+  `#f0ede8` backgrounds) and once at lines 895-907 (the one actually in effect,
+  and the one `comparativas.js:854` also targets). This duplication predates this
+  change (not introduced by Work Unit D or F) and de-duplicating it would touch a
+  shared rule consumed by `comparativas.js`'s unrelated `.cmp-col-dividers` UI —
+  left untouched per the "minimal and targeted" / "don't introduce a new... scale"
+  constraint; flagging for a future cleanup pass rather than fixing unilaterally
+  here. Also removed the dead `.temp-charts-2col` rule
+  (`css/styles.css:1190-1192` pre-edit) flagged by Work Unit E's E3 note — grepped
+  `index.html` and `js/` for `temp-charts-2col`, zero remaining usages (E2 already
+  promoted "Por día de semana" to a full-width `.temp-chart-card`), so the rule was
+  genuinely dead; removed, no other selector depends on it.
 
 ---
 
