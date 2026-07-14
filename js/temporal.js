@@ -143,7 +143,6 @@ function tempApplyFilters() {
   _renderKPIs(filtered, metrica);
   _renderEvolChart(filtered, metrica, dim);
   _renderDiaSemChart(filtered, metrica);
-  _renderHoraChart(filtered, metrica);
   _renderTabla(filtered, metrica);
   _tempPeriodoPopulate(empresa);
 }
@@ -391,37 +390,6 @@ function _renderDiaSemChart(rows, metrica) {
   _tempCharts['temp-chart-diasem'] = new Chart(ctx, {
     type: 'bar',
     data: { labels: DIAS_ORDER.map(d => d.slice(0,3)), datasets },
-    options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: empsToShow.length > 1, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
-  });
-}
-
-// ── CHART 3: Por hora de salida ───────────────────────────────────────────────
-function _renderHoraChart(rows, metrica) {
-  _destroyChart('temp-chart-hora');
-
-  const empresa = document.getElementById('temp-empresa-sel').value;
-  const empsToShow = empresa === 'all'
-    ? _tempEmpConf
-    : _tempEmpConf.filter(e => e.id === empresa);
-
-  const horas = [...new Set(rows.map(r => +r.hora_salida).filter(h => !isNaN(h) && h >= 0))].sort((a,b)=>a-b);
-  const horaLabels = horas.map(h => `${String(h).padStart(2,'0')}h`);
-
-  const datasets = empsToShow.map(emp => {
-    const empRows = rows.filter(r => String(r.account_id ?? r.owner_id) === emp.id);
-    const byHora  = _avgBy(empRows, r => +r.hora_salida, metrica);
-    return {
-      label: emp.id,
-      data:  horas.map(h => byHora[h] ?? 0),
-      backgroundColor: emp.color + 'cc',
-      borderRadius: 3,
-    };
-  });
-
-  const ctx = document.getElementById('temp-chart-hora').getContext('2d');
-  _tempCharts['temp-chart-hora'] = new Chart(ctx, {
-    type: 'bar',
-    data: { labels: horaLabels, datasets },
     options: { ..._chartDefaults(), plugins: { ..._chartDefaults().plugins, legend: { display: empsToShow.length > 1, labels: { font: { family:'Syne Mono', size:9 }, boxWidth:10 } } } }
   });
 }

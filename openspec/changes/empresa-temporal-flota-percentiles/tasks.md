@@ -365,7 +365,7 @@ Can run any time after Work Unit B lands (no functional dependency on C/D) but i
 sequenced last per the requested ordering since it's the lowest-risk, most mechanical
 change and benefits from a stable file to diff against.
 
-### E1. Delete `_renderHoraChart` and its call site in `js/temporal.js`
+### E1. Delete `_renderHoraChart` and its call site in `js/temporal.js` [x]
 - Delete the `_renderHoraChart` function body (`js/temporal.js:238-267`).
 - Delete its call in `tempApplyFilters` (`js/temporal.js:77`,
   `_renderHoraChart(filtered, metrica);`).
@@ -379,7 +379,7 @@ change and benefits from a stable file to diff against.
   file beyond avoiding literal line-range merge conflicts — do this in its own
   small commit/diff to keep the removal easy to review in isolation).
 
-### E2. Delete `#temp-chart-hora` card in `index.html`
+### E2. Delete `#temp-chart-hora` card in `index.html` [x]
 - Delete the second column of `.temp-charts-2col` — the card containing
   `<canvas id="temp-chart-hora">` (`index.html:759-765`).
 - Implementer choice per `design.md`: either promote "Por día de semana" to full
@@ -396,7 +396,7 @@ change and benefits from a stable file to diff against.
   `getContext('2d')` on it, or vice versa).
 - Parallel: no.
 
-### E3. Manual verification — removal + retained option
+### E3. Manual verification — removal + retained option [x] (code-trace + static verification; visually testable by user in-browser now, see note)
 - `#temp-chart-hora` canvas/card is gone from the DOM; no console error referencing
   a missing canvas (`document.getElementById('temp-chart-hora').getContext` would
   throw if E1/E2 are done out of order — confirm no such error).
@@ -408,6 +408,25 @@ change and benefits from a stable file to diff against.
   Dimension) is the explicit spec scenario to check.
 - Depends on: E2.
 - Parallel: no.
+- **Verification note (2026-07-14)**: `node --check js/temporal.js` passes. Grepped
+  the whole `js/` tree and `index.html` for `_renderHoraChart` and `temp-chart-hora`
+  — zero remaining references in code (only historical mentions remain in
+  `openspec/changes/.../{proposal,design,tasks}.md` and this spec's own text, which
+  is expected). `git diff` confirms E1/E2 were done atomically in the same pass (no
+  intermediate state where the canvas is gone but the JS call site remains, or vice
+  versa), so the `getContext('2d')`-on-null-element failure mode described above
+  cannot occur. Confirmed via diff that `#temp-dim-sel`'s `hora_salida` `<option>`
+  (`index.html:722`, unchanged) and the `hora_salida` branch inside `_renderEvolChart`
+  (`js/temporal.js:231-233,249,334`, unchanged) show zero diff lines — both are
+  byte-identical to their pre-E1/E2 state. One pre-existing CSS rule,
+  `.temp-charts-2col` (`css/styles.css:1190-1192`), is now dead code (its only
+  consumer in `index.html` was removed by E2, which promoted the día-semana card to
+  full width instead of keeping the 2-col grid); left in place as out-of-scope for
+  Work Unit E (CSS is Work Unit F's scope) and flagged here rather than deleted
+  unilaterally. Unlike Work Units B/C/D, this removal has **no data dependency** —
+  it does not require `flota/*.csv` to be uploaded to R2 — so the DOM/console-error
+  checks and the `hora_salida` selectability check are genuinely and fully
+  verifiable by the user in-browser right now, with no blocked sub-scenario.
 
 ---
 
