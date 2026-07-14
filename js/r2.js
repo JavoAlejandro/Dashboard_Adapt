@@ -14,15 +14,8 @@ let _r2CurrentArchivo = null;
 let _r2Index          = null;
 let _r2Modo           = null;   // "mezclado" | "empresa"
 
-// ── FETCH AUTENTICADO ────────────────────────────────────────────────────────
-async function r2Fetch(path) {
-  const res = await fetch(`${R2_BASE}/${path}`, {
-    headers: { 'Authorization': `Bearer ${_r2Token}` },
-  });
-  if (res.status === 403) throw new Error('TOKEN_INVALIDO');
-  if (!res.ok)            throw new Error(`HTTP ${res.status}`);
-  return res;
-}
+// r2Fetch(path) now lives in core.js (loaded before this file); it still
+// reads _r2Token/R2_BASE from this shared global scope at call time.
 
 // ── MODAL DE TOKEN ───────────────────────────────────────────────────────────
 function r2MostrarModalToken(onSuccess) {

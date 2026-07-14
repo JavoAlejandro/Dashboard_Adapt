@@ -802,8 +802,10 @@
 
 <!-- ══════════════════════════════════════════════════════════════════ -->
 <!-- MÓDULOS JS DE LA APLICACIÓN                                        -->
-<!--   Orden importante: R2_BASE debe estar definido antes de r2.js    -->
+<!--   Orden importante: R2_BASE debe estar definido antes de r2.js;   -->
+<!--   core.js debe cargar primero (TOKENS/r2Fetch/fetchParseCsv)      -->
 <!-- ══════════════════════════════════════════════════════════════════ -->
+<script src="js/core.js"></script>
 <script src="js/r2.js"></script>
 <script src="js/gps.js"></script>
 <script src="js/animation.js"></script>
