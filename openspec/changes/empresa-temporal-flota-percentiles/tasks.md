@@ -176,7 +176,7 @@ only depends on the frozen schema, not the generated data.
 
 ## Work Unit C — Percentile band overlay on the evolution chart (`js/temporal.js`)
 
-### C1. Add band datasets to `_renderEvolChart`
+### C1. Add band datasets to `_renderEvolChart` [x]
 - Inside `_renderEvolChart` (`js/temporal.js:147-208`), after computing the existing
   per-company `datasets` array, conditionally prepend/append three extra Chart.js line
   datasets **only when** `dim === 'mes'` **and** exactly one company is selected
@@ -209,7 +209,7 @@ only depends on the frozen schema, not the generated data.
 - Parallel: no (single-file, single-function change; sequential to avoid merge
   conflicts with C2/D work in the same file).
 
-### C2. Manual verification — band rendering
+### C2. Manual verification — band rendering [x] (code-trace verified only; no live/empirical render, see note)
 - Scenario 1 (design.md Testing Strategy): both `flota/*.csv` present (use the B4
   fixture or real uploaded data if available by this point), single company,
   `dim=mes` → gray band + dashed p50 render behind the company line, clearly reads as
@@ -221,6 +221,31 @@ only depends on the frozen schema, not the generated data.
 - Spec link: `FB-5` scenarios; `design.md` Testing Strategy #1, #2, #4.
 - Depends on: C1.
 - Parallel: no.
+- **Verification note (2026-07-14)**: `node --check js/temporal.js` passes. The
+  gating logic (`dim === 'mes' && empsToShow.length === 1 && _flotaRef.size`) was
+  code-traced, not run against real reference data, since `flota/*.csv` are still
+  absent from R2 (same real state as Work Unit B) — no valid token/data was
+  available in this session to exercise the happy path live, and the B4 fixture
+  was not built as part of this work unit (out of scope per the assigned Work
+  Unit C task list; B4 is itself optional/unstarted). Traced instead:
+  (a) `_flotaRef.size === 0` (current real state) short-circuits the `&&` before
+  the `.map`/`.some` band-building code ever runs, so `datasets` is left exactly
+  as the pre-existing per-company array — zero extra/empty/broken dataset
+  entries, existing company line(s) render unchanged, consistent with Work Unit
+  B's confirmed degradation behavior; (b) `dim !== 'mes'` (`dia_semana` /
+  `hora_salida`) short-circuits the same condition regardless of `_flotaRef`
+  contents — band never built; (c) `empresa === 'all'` (or any multi-company
+  selection) makes `empsToShow.length !== 1`, short-circuiting the condition —
+  band never built; (d) even if `_flotaRef` were hypothetically populated but had
+  no key matching the current `metrica` across the `mes` values on screen,
+  `hasBand` (`refPoints.some(p => p != null)` ) evaluates false and the
+  `datasets.unshift(...)` call is skipped — no null-filled band datasets are ever
+  added. Band-with-real-data visual rendering (gray band + dashed p50 actually
+  drawn, legend dedup behavior, values plausible across `metrica`/`mes`
+  switches) remains genuinely untested and requires the user to upload
+  `flota/percentiles_referencia.csv` (and ideally `flota/percentiles_empresa.csv`
+  for consistency, though C1 only reads the reference file) to R2 first — same
+  category of outstanding verification as B3's live in-browser confirmation.
 
 ---
 
