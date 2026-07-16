@@ -31,6 +31,12 @@ function switchSubTab(name, btn) {
   if (name === 'ruido' && typeof ruidoOnTabEnter === 'function') {
     ruidoOnTabEnter();
   }
+
+  // Entrando al sub-tab Congestión: cargar congestion/* (lazy, una sola vez)
+  // + pintar la huella de red compartida (mirror ruidoOnTabEnter)
+  if (name === 'congestion' && typeof congOnTabEnter === 'function') {
+    congOnTabEnter();
+  }
 }
 
 

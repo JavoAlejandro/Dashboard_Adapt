@@ -265,6 +265,14 @@ function _empresaSourceIngest(rows, label, tempStatusEl) {
   // or any of the primary render paths above.
   if (typeof temporalLoadFlota === 'function') temporalLoadFlota();
 
+  // Additive, non-blocking congestion data prefetch (congestion/*.csv +
+  // red_mecc.geojson). congestion.js owns the path constants + _cong* state
+  // and the loader itself; r2.js only triggers it, same encapsulation
+  // boundary as temporalLoadFlota above — r2.js never reaches into
+  // congestion.js's internals. Fire-and-forget: no `await`, never blocks
+  // this function's return or any of the primary render paths above.
+  if (typeof congEnsureLoaded === 'function') congEnsureLoaded();
+
   const busSel = document.getElementById('gps-bus-sel');
   if (busSel?.value && busSel.value !== 'all') {
     if (typeof showBusStats === 'function') showBusStats(busSel.value);
