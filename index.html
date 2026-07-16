@@ -367,14 +367,32 @@
 
 <!-- Sub-panel: Congestión -->
 <div id="sub-tab-congestion" class="sub-tab-panel">
-  <div class="subtab-placeholder">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+  <div class="subtab-placeholder" style="padding:32px 40px">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
       <rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="6" width="6" height="9" rx="1"/><rect x="17" y="7" width="6" height="7" rx="1"/>
       <path d="M4 9V6M12 6V3M20 7V4"/>
     </svg>
     <h3>Congestión</h3>
-    <p>Por implementar…</p>
-    <span>Indicadores de congestión vial y tiempos de viaje por segmento</span>
+    <p>KPIs de flota y tabla de vehículos — por implementar</p>
+    <span>La huella de congestión de la red se muestra a continuación</span>
+  </div>
+
+  <!-- Mapa de huella de red — capa compartida con Empresa→Congestión (PR3) -->
+  <div id="map-cong-empty" class="gps-map-empty">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+      <path d="M9 5v14"/><path d="M13 2v20"/><path d="M5 9v6"/><path d="M17 7v10"/><path d="M21 9v6"/>
+    </svg>
+    <p>Huella de congestión no disponible</p>
+    <span style="font-size:11px;color:var(--ink2)">congestion/red_mecc.geojson no fue encontrado en R2</span>
+  </div>
+
+  <div class="map-gps-wrap" id="map-cong-wrap" style="position:relative;display:none">
+    <div id="map-cong" style="height:480px;border:1px solid var(--border);border-radius:4px"></div>
+    <div class="cong-legend" id="cong-legend">
+      <div class="cong-legend-title">Carga vial (mecc)</div>
+      <div class="cong-legend-bar"></div>
+      <div class="cong-legend-labels"><span>bajo</span><span>alto</span></div>
+    </div>
   </div>
 </div>
 
