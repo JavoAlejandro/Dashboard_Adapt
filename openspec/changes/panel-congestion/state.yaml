@@ -1,0 +1,34 @@
+change: panel-congestion
+artifact_store: openspec
+execution_mode: interactive
+delivery_strategy: chained-3-prs
+chain_strategy: stacked-to-main
+pr_split:
+  - pr: 1
+    name: pr1-congestion-foundation
+    scope: Phase 0 (data contract fix) + Phase 1 (congestion.js core) + Phase 2 (footprint map) + map/ramp CSS (subset of 5.3)
+  - pr: 2
+    name: pr2-congestion-camion
+    scope: Phase 3 (Camión→Congestión) + its CSS (subset of 5.1/5.2)
+  - pr: 3
+    name: pr3-congestion-empresa
+    scope: Phase 4 (Empresa→Congestión) + its CSS (subset of 5.1) + Phase 6 (manual verification, full checklist run at the end)
+note: "CSS (Phase 5) is not a separate PR — each subtask lands with its corresponding markup/JS in the PR that introduces it, not all bundled at the end."
+phases:
+  explore:
+    status: done
+  proposal:
+    status: done
+  specs:
+    status: done
+  design:
+    status: done
+  tasks:
+    status: pending
+  apply:
+    status: pending
+  verify:
+    status: pending
+  archive:
+    status: pending
+next_recommended: sdd-tasks
