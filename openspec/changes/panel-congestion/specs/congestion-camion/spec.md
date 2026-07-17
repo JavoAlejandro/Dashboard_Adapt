@@ -28,7 +28,7 @@ The system MUST show fleet-aggregate KPI cards (at minimum: vehicle count, total
 
 ### Requirement: Vehicle Table
 
-The system MUST render a table with one row per vehicle from `congestion/vehiculos.csv`, showing at minimum `gps_vehicle_id`, `km_recorridos`, and `mecc_veh_s`. Selecting a row MUST open that vehicle's detail view.
+The system MUST render a table with one row per vehicle from `congestion/vehiculos.csv`, showing at minimum `gps_vehicle_id`, `km`, and `mecc` (per the frozen schema in `congestion-data-contract`). Selecting a row MUST open that vehicle's detail view.
 
 #### Scenario: Selecting a vehicle opens detail
 
