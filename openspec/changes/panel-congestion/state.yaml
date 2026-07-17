@@ -5,15 +5,21 @@ delivery_strategy: chained-3-prs
 chain_strategy: stacked-to-main
 pr_split:
   - pr: 1
-    name: pr1-congestion-foundation
+    name: feature/congestion-panel-pr1-foundation
+    base: main
     scope: Phase 0 (data contract fix) + Phase 1 (congestion.js core) + Phase 2 (footprint map) + map/ramp CSS (subset of 5.3)
+    status: applied — pushing now
   - pr: 2
-    name: pr2-congestion-camion
+    name: feature/congestion-panel-pr2-camion
+    base: feature/congestion-panel-pr1-foundation
     scope: Phase 3 (Camión→Congestión) + its CSS (subset of 5.1/5.2)
+    status: pending
   - pr: 3
-    name: pr3-congestion-empresa
+    name: feature/congestion-panel-pr3-empresa
+    base: feature/congestion-panel-pr2-camion
     scope: Phase 4 (Empresa→Congestión) + its CSS (subset of 5.1) + Phase 6 (manual verification, full checklist run at the end)
-note: "CSS (Phase 5) is not a separate PR — each subtask lands with its corresponding markup/JS in the PR that introduces it, not all bundled at the end."
+    status: pending
+note: "CSS (Phase 5) is not a separate PR — each subtask lands with its corresponding markup/JS in the PR that introduces it, not all bundled at the end. Branch names renamed from pr1/2/3-* to feature/congestion-panel-prN-* to match this repo's real precedent (refactor/empresa-panel-pr1-foundation etc.) — no CI enforces a naming regex here, no .github/ workflows exist in this repo."
 phases:
   explore:
     status: done
@@ -24,11 +30,11 @@ phases:
   design:
     status: done
   tasks:
-    status: pending
+    status: done
   apply:
-    status: pending
+    status: in_progress — PR1 applied+reviewed, not yet pushed; PR2/PR3 pending
   verify:
     status: pending
   archive:
     status: pending
-next_recommended: sdd-tasks
+next_recommended: push PR1, open PR, then sdd-apply for PR2
