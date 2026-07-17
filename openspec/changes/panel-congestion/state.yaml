@@ -13,7 +13,7 @@ pr_split:
     name: feature/congestion-panel-pr2-camion
     base: feature/congestion-panel-pr1-foundation
     scope: Phase 3 (Camión→Congestión) + its CSS (subset of 5.1/5.2)
-    status: pending
+    status: applied — pending review/push
   - pr: 3
     name: feature/congestion-panel-pr3-empresa
     base: feature/congestion-panel-pr2-camion
@@ -32,9 +32,9 @@ phases:
   tasks:
     status: done
   apply:
-    status: in_progress — PR1 applied+reviewed, not yet pushed; PR2/PR3 pending
+    status: in_progress — PR1 applied+reviewed, not yet pushed; PR2 applied (Phase 3 tasks 3.1-3.5 done, [x] in tasks.md), not yet reviewed/pushed; PR3 pending
   verify:
     status: pending
   archive:
     status: pending
-next_recommended: push PR1, open PR, then sdd-apply for PR2
+next_recommended: push PR1, open PR; review PR2 (feature/congestion-panel-pr2-camion, no valid receipt yet); then sdd-apply for PR3
