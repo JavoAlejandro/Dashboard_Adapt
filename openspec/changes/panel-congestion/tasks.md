@@ -50,11 +50,21 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Camión→Congestión (`congestion-camion`)
 
-- [ ] 3.1 `index.html`: replace `#sub-tab-congestion` body (fleet KPI cards, vehicle table, detail container, map + `map-cong-empty`).
-- [ ] 3.2 `congestion.js`: fleet KPI cards (vehicle count, total/avg `km`, avg `mecc`) from `_congVehData` for selected scope — read precomputed fields only (per Phase 0.3).
-- [ ] 3.3 Render vehicle table (`gps_vehicle_id`, `km`, `mecc`, `iev`, `n_pasadas`); row click opens detail view.
-- [ ] 3.4 Build `_congByOwner` (Map `String(owner_id) → bus_id[]` from `gpsLayers`), rebuilt per render; match each row's `gps_vehicle_id`; render "Ver en Exposición" action when matched, plain detail when not (no error).
-- [ ] 3.5 Empty state when `_congVehData` has no rows for the selected company scope.
+- [x] 3.1 `index.html`: replace `#sub-tab-congestion` body (fleet KPI cards, vehicle table, detail container, map + `map-cong-empty`).
+- [x] 3.2 `congestion.js`: fleet KPI cards (vehicle count, total/avg `km`, avg `mecc`) from `_congVehData` for selected scope — read precomputed fields only (per Phase 0.3).
+- [x] 3.3 Render vehicle table (`gps_vehicle_id`, `km`, `mecc`, `iev`, `n_pasadas`); row click opens detail view.
+- [x] 3.4 Build `_congByOwner` (Map `String(owner_id) → bus_id[]` from `gpsLayers`), rebuilt per render; match each row's `gps_vehicle_id`; render "Ver en Exposición" action when matched, plain detail when not (no error).
+- [x] 3.5 Empty state when `_congVehData` has no rows for the selected company scope.
+
+  Note (apply-time decision, not explicit in design.md): Camión has no dedicated
+  company selector for Congestión. Scope resolution replicates gps.js's own
+  existing mechanism: `#gps-empresa-sel` (sub-filter within the loaded R2 file,
+  visible only when >1 `account_id` is present) takes priority; otherwise falls
+  back to `_r2CurrentArchivo` when `_r2Modo === 'empresa'` (r2.js documents this
+  as the "definitivo" company selector). If neither resolves a single company
+  (nothing loaded yet, or legacy "mezclado" mode with no account_id), the panel
+  shows the empty-state rather than mixing multi-company rows — see
+  `_congActiveAccountId()` in `js/congestion.js`.
 
 ## Phase 4: Empresa→Congestión (`congestion-empresa`)
 
@@ -66,9 +76,9 @@ Chain strategy: stacked-to-main
 
 ## Phase 5: CSS (`css/styles.css`)
 
-- [ ] 5.1 KPI + rank/"hallazgos" card styles (Camión + Empresa).
-- [ ] 5.2 Vehicle table + detail panel styles.
-- [ ] 5.3 Footprint map wrap + `map-cong-empty` + ramp legend styles.
+- [~] 5.1 KPI + rank/"hallazgos" card styles (Camión + Empresa). — Camión fleet KPI cards (`.cong-kpi-row`/`.cong-kpi*`) done in PR2; Empresa rank/"hallazgos" card styles remain for PR3.
+- [x] 5.2 Vehicle table + detail panel styles. (`.cong-table`, `.cong-tr-veh`, `.cong-detalle-*`)
+- [x] 5.3 Footprint map wrap + `map-cong-empty` + ramp legend styles. (landed in PR1 alongside Phase 2; confirmed present, marking complete here)
 
 ## Phase 6: Manual Verification (browser checklist, no test runner)
 
