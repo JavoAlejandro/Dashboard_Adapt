@@ -192,4 +192,220 @@ function congRenderFootprint() {
 async function congOnTabEnter() {
   await congEnsureLoaded();
   congRenderFootprint();
+
+  // Camión→Congestión: KPIs de flota + tabla de vehículos (PR2). No-op
+  // defensivo si el panel Camión no está montado (p.ej. llamado desde Empresa
+  // en un futuro PR3 antes de que exista un scope de flota).
+  if (typeof congRenderVehiclePanel === 'function') congRenderVehiclePanel();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CAMIÓN→CONGESTIÓN — KPIs de flota, tabla de vehículos y detalle (PR2)
+//
+// Regla vinculante (Phase 0.3 / design.md): `_congVehData` ya viene agregado
+// upstream. Todo lo de acá abajo SOLO lee, filtra, ordena y renderiza esos
+// campos — nunca recalcula mean/sum de campos crudos por vehículo.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Estado de orden de la tabla (no persistido — se resetea al recargar la página).
+let _congVehSort = { col: 'km', dir: 'desc' };
+
+// gps_vehicle_id del vehículo actualmente abierto en el panel de detalle, o null.
+let _congVehSelected = null;
+
+const _CONG_VEH_COLS = [
+  { key: 'gps_vehicle_id', lbl: 'Vehículo',   num: false },
+  { key: 'km',              lbl: 'Km',         num: true  },
+  { key: 'mecc',            lbl: 'MECC',       num: true  },
+  { key: 'iev',              lbl: 'IEV',        num: true  },
+  { key: 'n_pasadas',        lbl: 'N° pasadas', num: true  },
+];
+
+// ── SCOPE DE EMPRESA ACTIVO — mismo criterio que gps.js ya usa hoy ─────────
+// DECISIÓN (no explícita en design.md, tomada en apply — ver PR2 apply-progress):
+// Camión no tiene un selector de empresa propio para Congestión; gps.js ya
+// resuelve "empresa activa" con dos señales que conviven hoy en el propio tab:
+//   1. #gps-empresa-sel: sub-filtro DENTRO del archivo/geojson ya cargado
+//      (existe y es visible solo cuando ese archivo trae >1 account_id).
+//   2. _r2CurrentArchivo (r2.js): en modo "empresa" ES el account_id del
+//      archivo cargado — r2.js lo documenta como el selector "definitivo".
+// Replicamos exactamente esa jerarquía: si #gps-empresa-sel tiene un valor
+// específico (≠ 'all') se usa; si no, se cae a _r2CurrentArchivo en modo
+// empresa. Si ninguna de las dos resuelve una única empresa (nada cargado
+// aún, o modo "mezclado" sin account_id), se trata como "sin scope" → la
+// tabla/KPIs quedan vacías (empty-state) en vez de mezclar vehículos de
+// distintas empresas, que violaría el requirement "selected company scope".
+function _congActiveAccountId() {
+  const empresaSel = document.getElementById('gps-empresa-sel');
+  if (empresaSel && empresaSel.value && empresaSel.value !== 'all') {
+    return String(empresaSel.value);
+  }
+  if (typeof _r2Modo !== 'undefined' && _r2Modo === 'empresa' &&
+      typeof _r2CurrentArchivo !== 'undefined' && _r2CurrentArchivo) {
+    return String(_r2CurrentArchivo);
+  }
+  return null;
+}
+
+function _congScopedVehRows() {
+  const accountId = _congActiveAccountId();
+  if (accountId == null) return [];
+  return _congVehData.filter(r => String(r.account_id) === accountId);
+}
+
+// ── ENTRADA: KPIs + tabla para el scope de empresa activo ──────────────────
+function congRenderVehiclePanel() {
+  const empty   = document.getElementById('cong-veh-empty');
+  const content = document.getElementById('cong-veh-content');
+  if (!empty || !content) return;   // panel Camión no montado — no-op defensivo
+
+  const scopedRows = _congScopedVehRows();
+
+  if (!scopedRows.length) {
+    empty.style.display   = 'flex';
+    content.style.display = 'none';
+    _congVehSelected = null;
+    return;
+  }
+
+  empty.style.display   = 'none';
+  content.style.display = 'block';
+
+  _congRenderFleetKpis(scopedRows);
+  _congRenderVehTable(scopedRows);
+
+  // Si el vehículo seleccionado sigue en el scope tras el re-render, refresca
+  // su detalle; si ya no está (cambió de empresa), cierra el panel.
+  if (_congVehSelected != null) {
+    const stillThere = scopedRows.some(r => String(r.gps_vehicle_id) === _congVehSelected);
+    if (stillThere) _congRenderVehDetail(_congVehSelected, scopedRows);
+    else _congCloseVehDetail();
+  }
+}
+
+// ── KPIs de flota — solo lectura de campos precomputados (Phase 0.3) ───────
+function _congRenderFleetKpis(rows) {
+  const container = document.getElementById('cong-kpi-row');
+  if (!container) return;
+
+  const kmVals   = rows.map(r => Number(r.km)).filter(v => !isNaN(v));
+  const meccVals = rows.map(r => Number(r.mecc)).filter(v => !isNaN(v));
+  const sum = arr => arr.reduce((a, b) => a + b, 0);
+  const avg = arr => arr.length ? sum(arr) / arr.length : 0;
+
+  const kpis = [
+    { val: rows.length.toLocaleString(),
+      lbl: 'Vehículos',     sub: 'en la flota' },
+    { val: sum(kmVals).toLocaleString(undefined, { maximumFractionDigits: 0 }),
+      lbl: 'Km total',      sub: 'suma de la flota' },
+    { val: avg(kmVals).toFixed(1),
+      lbl: 'Km promedio',   sub: 'por vehículo' },
+    { val: avg(meccVals).toFixed(2),
+      lbl: 'MECC promedio', sub: 'carga vial' },
+  ];
+
+  container.innerHTML = '';
+  kpis.forEach(k => {
+    const el = document.createElement('div');
+    el.className = 'cong-kpi';
+    el.innerHTML = `<div class="cong-kpi-val">${k.val}</div>
+      <div class="cong-kpi-lbl">${k.lbl}</div>
+      <div class="cong-kpi-sub">${k.sub}</div>`;
+    container.appendChild(el);
+  });
+}
+
+// ── Tabla de vehículos ordenable (clic en encabezado) ───────────────────────
+function _congFmtNum(v, decimals) {
+  const n = Number(v);
+  if (isNaN(n)) return '—';
+  const d = decimals == null ? 1 : decimals;
+  return n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+function _congRenderVehTable(rows) {
+  const container = document.getElementById('cong-veh-tabla');
+  if (!container) return;
+
+  const { col, dir } = _congVehSort;
+  const colDef = _CONG_VEH_COLS.find(c => c.key === col);
+  const sorted = rows.slice().sort((a, b) => {
+    const va = a[col], vb = b[col];
+    let cmp;
+    if (colDef && colDef.num) cmp = (Number(va) || 0) - (Number(vb) || 0);
+    else cmp = String(va == null ? '' : va).localeCompare(String(vb == null ? '' : vb));
+    return dir === 'asc' ? cmp : -cmp;
+  });
+
+  const arrow = key => key !== col ? '' : (dir === 'asc' ? ' ▲' : ' ▼');
+
+  let html = '<table class="cong-table"><thead><tr>';
+  _CONG_VEH_COLS.forEach(c => {
+    html += `<th class="cong-th-sort" onclick="_congOnSortClick('${c.key}')">${c.lbl}${arrow(c.key)}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  sorted.forEach(r => {
+    const vid    = String(r.gps_vehicle_id);
+    const vidJs  = vid.replace(/'/g, "\\'");
+    const isSel  = vid === _congVehSelected;
+    html += `<tr class="cong-tr-veh${isSel ? ' active' : ''}" onclick="_congOnVehRowClick('${vidJs}')">
+      <td>${vid}</td>
+      <td class="td-num">${_congFmtNum(r.km, 1)}</td>
+      <td class="td-num">${_congFmtNum(r.mecc, 2)}</td>
+      <td class="td-num">${_congFmtNum(r.iev, 2)}</td>
+      <td class="td-num">${_congFmtNum(r.n_pasadas, 0)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function _congOnSortClick(col) {
+  if (_congVehSort.col === col) {
+    _congVehSort = { col, dir: _congVehSort.dir === 'asc' ? 'desc' : 'asc' };
+  } else {
+    _congVehSort = { col, dir: 'desc' };
+  }
+  _congRenderVehTable(_congScopedVehRows());
+}
+
+function _congOnVehRowClick(vehicleId) {
+  _congVehSelected = vehicleId;
+  const scopedRows = _congScopedVehRows();
+  _congRenderVehTable(scopedRows);   // refresca el resaltado de fila activa
+  _congRenderVehDetail(vehicleId, scopedRows);
+}
+
+function _congCloseVehDetail() {
+  _congVehSelected = null;
+  const card = document.getElementById('cong-veh-detalle-card');
+  if (card) card.style.display = 'none';
+}
+
+// ── Detalle de vehículo ──────────────────────────────────────────────────────
+function _congRenderVehDetail(vehicleId, scopedRows) {
+  const card = document.getElementById('cong-veh-detalle-card');
+  const sub  = document.getElementById('cong-veh-detalle-sub');
+  const body = document.getElementById('cong-veh-detalle');
+  if (!card || !body) return;
+
+  const row = scopedRows.find(r => String(r.gps_vehicle_id) === vehicleId);
+  if (!row) { _congCloseVehDetail(); return; }
+
+  card.style.display = 'block';
+  if (sub) sub.textContent = `Vehículo ${vehicleId}`;
+
+  const pct = v => v != null && !isNaN(Number(v)) ? (Number(v) * 100).toFixed(0) + '%' : '—';
+
+  body.innerHTML = `
+    <div class="cong-detalle-grid">
+      <div><span class="cong-detalle-lbl">Km</span><span class="cong-detalle-val">${_congFmtNum(row.km, 1)}</span></div>
+      <div><span class="cong-detalle-lbl">MECC</span><span class="cong-detalle-val">${_congFmtNum(row.mecc, 2)}</span></div>
+      <div><span class="cong-detalle-lbl">IEV</span><span class="cong-detalle-val">${_congFmtNum(row.iev, 2)}</span></div>
+      <div><span class="cong-detalle-lbl">N° pasadas</span><span class="cong-detalle-val">${_congFmtNum(row.n_pasadas, 0)}</span></div>
+      <div><span class="cong-detalle-lbl">% vías rápidas</span><span class="cong-detalle-val">${pct(row.hwy_share)}</span></div>
+      <div><span class="cong-detalle-lbl">% hora punta</span><span class="cong-detalle-val">${pct(row.peak_share)}</span></div>
+    </div>
+  `;
 }
