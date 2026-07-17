@@ -253,6 +253,23 @@ function _congScopedVehRows() {
   return _congVehData.filter(r => String(r.account_id) === accountId);
 }
 
+// Reconstruye el índice inverso owner_id → bus_id[] a partir de gpsLayers
+// (gps.js). Rebuilt en cada render de la tabla — no persistido. Si Exposición
+// aún no cargó datos, gpsLayers está vacío y el cruce simplemente no
+// encuentra match (design.md: "sin error, re-resoluble en el próximo render").
+function _congBuildByOwner() {
+  _congByOwner = new Map();
+  if (typeof gpsLayers !== 'object' || !gpsLayers) return;
+  Object.entries(gpsLayers).forEach(([busId, entry]) => {
+    const ownerId = entry && entry.feature && entry.feature.properties
+      ? entry.feature.properties.owner_id : null;
+    if (ownerId == null || ownerId === '') return;
+    const key = String(ownerId);
+    if (!_congByOwner.has(key)) _congByOwner.set(key, []);
+    _congByOwner.get(key).push(busId);
+  });
+}
+
 // ── ENTRADA: KPIs + tabla para el scope de empresa activo ──────────────────
 function congRenderVehiclePanel() {
   const empty   = document.getElementById('cong-veh-empty');
@@ -271,6 +288,7 @@ function congRenderVehiclePanel() {
   empty.style.display   = 'none';
   content.style.display = 'block';
 
+  _congBuildByOwner();
   _congRenderFleetKpis(scopedRows);
   _congRenderVehTable(scopedRows);
 
@@ -383,7 +401,7 @@ function _congCloseVehDetail() {
   if (card) card.style.display = 'none';
 }
 
-// ── Detalle de vehículo ──────────────────────────────────────────────────────
+// ── Detalle de vehículo + cruce con gps.js ("Ver en Exposición") ───────────
 function _congRenderVehDetail(vehicleId, scopedRows) {
   const card = document.getElementById('cong-veh-detalle-card');
   const sub  = document.getElementById('cong-veh-detalle-sub');
@@ -396,6 +414,13 @@ function _congRenderVehDetail(vehicleId, scopedRows) {
   card.style.display = 'block';
   if (sub) sub.textContent = `Vehículo ${vehicleId}`;
 
+  // Cruce con gps.js: matched → acción "Ver en Exposición"; sin match → solo
+  // detalle, sin error (spec congestion-camion: "Vehicle has no GPS match").
+  const matches  = _congByOwner.get(vehicleId) || [];
+  const matchBtn = matches.length
+    ? `<button class="gbtn" onclick="_congGoToVehicleInExposicion('${String(matches[0]).replace(/'/g, "\\'")}')">→ Ver en Exposición</button>`
+    : '<span class="cong-detalle-nomatch">Sin coincidencia en Exposición (aún no cargada, o vehículo fuera de ese universo)</span>';
+
   const pct = v => v != null && !isNaN(Number(v)) ? (Number(v) * 100).toFixed(0) + '%' : '—';
 
   body.innerHTML = `
@@ -407,5 +432,43 @@ function _congRenderVehDetail(vehicleId, scopedRows) {
       <div><span class="cong-detalle-lbl">% vías rápidas</span><span class="cong-detalle-val">${pct(row.hwy_share)}</span></div>
       <div><span class="cong-detalle-lbl">% hora punta</span><span class="cong-detalle-val">${pct(row.peak_share)}</span></div>
     </div>
+    <div class="cong-detalle-link">${matchBtn}</div>
   `;
+}
+
+// Salta a Camión→Exposición y aísla la ruta del bus_id dado, replicando la
+// rama de "match resuelto" de gps.js#searchRoute() (aislar capa, ajustar
+// bounds, sincronizar selects, animar) — mismo patrón, sin duplicar el motor
+// de búsqueda porque acá el bus_id ya viene resuelto por _congByOwner.
+function _congGoToVehicleInExposicion(busId) {
+  if (typeof gpsLayers !== 'object' || !gpsLayers || !gpsLayers[busId]) return;
+  const entry = gpsLayers[busId];
+
+  const gpsTabBtn = document.querySelector('.main-tab[onclick*="\'gps\'"]');
+  if (gpsTabBtn) gpsTabBtn.click();
+  const expoBtn = document.querySelector('#sub-tabs-camion .sub-tab[onclick*="exposicion"]');
+  if (expoBtn) expoBtn.click();
+
+  Object.entries(gpsLayers).forEach(([id, e]) => {
+    e.visible = (id === busId);
+    try { gpsMap.removeLayer(e.layer); } catch (err) { /* capa aún no removida del mapa */ }
+    if (e.visible && e.layer) e.layer.addTo(gpsMap);
+    const chip = document.querySelector(`.bus-chip[data-bus-id="${id}"]`);
+    if (chip) chip.classList.toggle('hidden-bus', !e.visible);
+  });
+  if (typeof updateMarkerVisibility === 'function') updateMarkerVisibility(busId);
+  try {
+    if (typeof gpsMap !== 'undefined' && gpsMap && entry.layer && entry.layer.getBounds) {
+      gpsMap.fitBounds(entry.layer.getBounds(), { padding: [50, 50] });
+    }
+  } catch (err) { /* geometría no lista aún — mantener vista actual */ }
+
+  const busSel = document.getElementById('gps-bus-sel');
+  if (busSel) busSel.value = busId;
+  if (typeof animSetTarget === 'function') animSetTarget(busId);
+  if (typeof showBusStats === 'function') showBusStats(busId);
+  if (typeof compareState !== 'undefined' && !compareState.active &&
+      typeof showCompareButton === 'function') {
+    showCompareButton(busId);
+  }
 }
