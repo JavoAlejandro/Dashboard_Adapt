@@ -367,14 +367,37 @@
 
 <!-- Sub-panel: Congestión -->
 <div id="sub-tab-congestion" class="sub-tab-panel">
-  <div class="subtab-placeholder" style="padding:32px 40px">
+
+  <!-- Sin datos de congestión para la flota/empresa activa (PR2 — congestion-camion) -->
+  <div id="cong-veh-empty" class="gps-map-empty">
     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
       <rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="6" width="6" height="9" rx="1"/><rect x="17" y="7" width="6" height="7" rx="1"/>
       <path d="M4 9V6M12 6V3M20 7V4"/>
     </svg>
-    <h3>Congestión</h3>
-    <p>KPIs de flota y tabla de vehículos — por implementar</p>
-    <span>La huella de congestión de la red se muestra a continuación</span>
+    <p>Sin datos de congestión para esta flota</p>
+    <span style="font-size:10px">Selecciona una empresa en el tab Camión, o verifica que congestion/vehiculos.csv tenga filas para ella</span>
+  </div>
+
+  <!-- KPIs de flota + tabla de vehículos + detalle -->
+  <div id="cong-veh-content" style="display:none">
+
+    <div class="cong-kpi-row" id="cong-kpi-row"></div>
+
+    <div class="temp-chart-card" style="margin-top:16px">
+      <div class="temp-chart-header">
+        <span class="temp-chart-title">Vehículos</span>
+        <span class="temp-chart-sub">Clic en un encabezado para ordenar · clic en una fila para ver el detalle</span>
+      </div>
+      <div id="cong-veh-tabla" style="overflow-x:auto"></div>
+    </div>
+
+    <div class="temp-chart-card" id="cong-veh-detalle-card" style="margin-top:16px;display:none">
+      <div class="temp-chart-header">
+        <span class="temp-chart-title">Detalle del vehículo</span>
+        <span class="temp-chart-sub" id="cong-veh-detalle-sub"></span>
+      </div>
+      <div id="cong-veh-detalle"></div>
+    </div>
   </div>
 
   <!-- Mapa de huella de red — capa compartida con Empresa→Congestión (PR3) -->
