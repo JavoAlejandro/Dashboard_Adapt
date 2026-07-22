@@ -166,7 +166,9 @@ function congRenderFootprint() {
   }
 
   if (empty) empty.style.display = 'none';
-  if (wrap)  wrap.style.display  = 'block';
+  // TODO: map-cong-wrap (mapa de Congestión) se mantiene oculto de forma
+  // deliberada por ahora — decisión pendiente de revisar en un PR futuro.
+  // if (wrap) wrap.style.display = 'block';
 
   congInitMap();
   if (!_congMap) return;
