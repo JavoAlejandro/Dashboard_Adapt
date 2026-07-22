@@ -1270,7 +1270,9 @@ function initGPSMap() {
   // Init map
   document.getElementById('map-gps-empty').style.display = 'none';
   document.getElementById('map-gps').style.display = 'block';
-  document.getElementById('map-gps-wrap').style.display = 'block';
+  // TODO: map-gps-wrap (mapa de Exposición) se mantiene oculto de forma
+  // deliberada por ahora — decisión pendiente de revisar en un PR futuro.
+  // document.getElementById('map-gps-wrap').style.display = 'block';
   if (gpsMap) { gpsMap.remove(); gpsMap = null; }
   activeVia = null;
   allVias   = [];

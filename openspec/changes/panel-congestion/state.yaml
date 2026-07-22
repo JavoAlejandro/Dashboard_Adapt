@@ -12,14 +12,28 @@ pr_split:
   - pr: 2
     name: feature/congestion-panel-pr2-camion
     base: feature/congestion-panel-pr1-foundation
-    scope: Phase 3 (Camión→Congestión) + its CSS (subset of 5.1/5.2)
-    status: applied — pending review/push
+    scope: Phase 3 (Camión→Congestión) + Phase 3.5 (post-hoc schema correction + drill-down redesign) + its CSS (subset of 5.1/5.2)
+    status: reworked — docs reconciled with real vehiculos.csv schema, ready to commit
   - pr: 3
     name: feature/congestion-panel-pr3-empresa
     base: feature/congestion-panel-pr2-camion
     scope: Phase 4 (Empresa→Congestión) + its CSS (subset of 5.1) + Phase 6 (manual verification, full checklist run at the end)
-    status: pending
+    status: pending — fully untouched, not started
 note: "CSS (Phase 5) is not a separate PR — each subtask lands with its corresponding markup/JS in the PR that introduces it, not all bundled at the end. Branch names renamed from pr1/2/3-* to feature/congestion-panel-prN-* to match this repo's real precedent (refactor/empresa-panel-pr1-foundation etc.) — no CI enforces a naming regex here, no .github/ workflows exist in this repo."
+schema_correction:
+  status: applied (2026-07-22)
+  summary: >
+    congestion/vehiculos.csv is trip-grained (id_viaje, owner_id, account_id,
+    km_recorridos, mecc_veh_s), not per-vehicle as both the originally-frozen
+    contract and its Phase 0 correction assumed (both were based on an
+    extracted window.DASH.vehicles[] UI sample, not the real file). Verified
+    directly against datos_congestion/ during PR2 implementation.
+  impact:
+    - "congestion-data-contract/spec.md: Vehicle CSV Schema requirement rewritten for the trip-grained header; client-side sum-by-owner_id/account_id is now the one permitted aggregation."
+    - "congestion-camion/spec.md: flat vehicle table + 'Ver en Exposición' button scenario replaced with the 3-level Empresa/Camión/Viaje cascading drill-down + GPS route map-overlay cross-link (_congRenderVehicleRouteOverlay)."
+    - "design.md: Design Revision note added; Vehicle Cross-link Design, Data Flow, Interfaces, and Module state sections updated to match."
+    - "tasks.md: Phase 3.1-3.5 task text corrected to describe the drill-down/overlay design; new Phase 3.5 added documenting the rework explicitly."
+    - "congestion-empresa/spec.md and congestion-footprint-map/spec.md: reviewed, no invalidated assumptions found — left unchanged (Phase 4/Empresa is untouched and does not yet consume vehiculos.csv)."
 phases:
   explore:
     status: done
@@ -32,9 +46,9 @@ phases:
   tasks:
     status: done
   apply:
-    status: in_progress — PR1 applied+reviewed, not yet pushed; PR2 applied (Phase 3 tasks 3.1-3.5 done, [x] in tasks.md), not yet reviewed/pushed; PR3 pending
+    status: in_progress — PR1 applied+reviewed, not yet pushed; PR2 applied and reworked (Phase 3 + 3.5 done, [x] in tasks.md; code + docs reconciled with real vehiculos.csv schema), ready to commit, not yet reviewed/pushed; PR3 (Phase 4, Empresa) fully pending, not started
   verify:
     status: pending
   archive:
     status: pending
-next_recommended: push PR1, open PR; review PR2 (feature/congestion-panel-pr2-camion, no valid receipt yet); then sdd-apply for PR3
+next_recommended: commit PR2 rework on feature/congestion-panel-pr2-camion; push PR1, open PR; review PR2 (no valid receipt yet); then sdd-apply Phase 4 for PR3 (Empresa→Congestión)

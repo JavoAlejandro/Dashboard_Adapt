@@ -96,6 +96,23 @@
       <select class="gps-select" id="gps-viaje-sel" onchange="onViajeChange()" style="min-width:110px;display:none">
         <option value="all">Todos los viajes</option>
       </select>
+
+      <!-- Congestión: mismo gps-topbar, scope propio desde congestion/vehiculos.csv
+           (id_viaje, owner_id, account_id) — oculto salvo en el sub-tab Congestión,
+           mirroring cómo Ruido oculta Mes/Día en este mismo bloque -->
+      <span class="ctrl-lbl" id="cong-empresa-lbl" style="display:none">Empresa</span>
+      <select class="gps-select" id="cong-empresa-sel" onchange="congOnEmpresaChange()" style="min-width:150px;display:none">
+        <option value="">Cargando…</option>
+      </select>
+      <span class="ctrl-lbl" id="cong-camion-lbl" style="display:none">Camión</span>
+      <select class="gps-select" id="cong-camion-sel" onchange="congOnCamionChange()" style="min-width:150px;display:none" disabled>
+        <option value="all">Todos los camiones</option>
+      </select>
+      <span class="ctrl-lbl" id="cong-viaje-lbl" style="display:none">Viaje</span>
+      <select class="gps-select" id="cong-viaje-sel" onchange="congOnViajeChange()" style="min-width:130px;display:none" disabled>
+        <option value="all">Todos los viajes</option>
+      </select>
+
       <button class="gbtn" onclick="resetFilters()" id="btn-reset-filters" style="display:none">✕ Limpiar</button>
       <button class="gbtn" onclick="fitAllBuses()">↔ Encuadrar todo</button>
     </div>
@@ -368,14 +385,14 @@
 <!-- Sub-panel: Congestión -->
 <div id="sub-tab-congestion" class="sub-tab-panel">
 
-  <!-- Sin datos de congestión para la flota/empresa activa (PR2 — congestion-camion) -->
+  <!-- Sin datos de congestión para la flota/empresa activa -->
   <div id="cong-veh-empty" class="gps-map-empty">
     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
       <rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="6" width="6" height="9" rx="1"/><rect x="17" y="7" width="6" height="7" rx="1"/>
       <path d="M4 9V6M12 6V3M20 7V4"/>
     </svg>
     <p>Sin datos de congestión para esta flota</p>
-    <span style="font-size:10px">Selecciona una empresa en el tab Camión, o verifica que congestion/vehiculos.csv tenga filas para ella</span>
+    <span style="font-size:10px">Selecciona una empresa arriba, o verifica que congestion/vehiculos.csv tenga filas para ella</span>
   </div>
 
   <!-- KPIs de flota + tabla de vehículos + detalle -->

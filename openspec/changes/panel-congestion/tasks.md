@@ -50,21 +50,32 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Camión→Congestión (`congestion-camion`)
 
-- [x] 3.1 `index.html`: replace `#sub-tab-congestion` body (fleet KPI cards, vehicle table, detail container, map + `map-cong-empty`).
-- [x] 3.2 `congestion.js`: fleet KPI cards (vehicle count, total/avg `km`, avg `mecc`) from `_congVehData` for selected scope — read precomputed fields only (per Phase 0.3).
-- [x] 3.3 Render vehicle table (`gps_vehicle_id`, `km`, `mecc`, `iev`, `n_pasadas`); row click opens detail view.
-- [x] 3.4 Build `_congByOwner` (Map `String(owner_id) → bus_id[]` from `gpsLayers`), rebuilt per render; match each row's `gps_vehicle_id`; render "Ver en Exposición" action when matched, plain detail when not (no error).
-- [x] 3.5 Empty state when `_congVehData` has no rows for the selected company scope.
+- [x] 3.1 `index.html`: replace `#sub-tab-congestion` body (KPI row, sortable table, detail card, map + `map-cong-empty`); add `#cong-empresa-sel`/`#cong-camion-sel`/`#cong-viaje-sel` cascading selects to the shared `gps-topbar`.
+- [x] 3.2 `congestion.js`: scope-appropriate KPI cards — Empresa level from precomputed `empresas.csv` fields, Camión level from summed `km_recorridos`/`mecc_veh_s` of that Camión's trip rows (per amended Phase 0.3 — summation by `owner_id`/`account_id` is the one permitted client-side aggregation).
+- [x] 3.3 Render sortable table (Camión-level: one row per Camión, aggregated via `_congAggByOwner`; Viaje-level: one row per trip); row click drills into that row's level (`congOnCamionChange`/`congOnViajeChange`).
+- [x] 3.4 Build `_congByOwner` (Map `String(owner_id) → bus_id[]` from `gpsLayers`, via `_congBuildByOwner`), rebuilt per render; when a Camión is in focus, overlay its real GPS route on the shared footprint map (`_congRenderVehicleRouteOverlay`) instead of a per-row cross-link button; no match / GPS not loaded → footprint renders alone, no error.
+- [x] 3.5 Empty state when `_congVehData` has no rows for the selected company scope (`#cong-empresa-sel`).
 
-  Note (apply-time decision, not explicit in design.md): Camión has no dedicated
-  company selector for Congestión. Scope resolution replicates gps.js's own
-  existing mechanism: `#gps-empresa-sel` (sub-filter within the loaded R2 file,
-  visible only when >1 `account_id` is present) takes priority; otherwise falls
-  back to `_r2CurrentArchivo` when `_r2Modo === 'empresa'` (r2.js documents this
-  as the "definitivo" company selector). If neither resolves a single company
-  (nothing loaded yet, or legacy "mezclado" mode with no account_id), the panel
-  shows the empty-state rather than mixing multi-company rows — see
-  `_congActiveAccountId()` in `js/congestion.js`.
+  Note (apply-time decision, not explicit in design.md): Camión Congestión does
+  not reuse the shared `#gps-empresa-sel`/`_r2CurrentArchivo` GPS filters for
+  scope resolution. It has its own independent `#cong-empresa-sel` populated
+  directly from the distinct `account_id` values in `_congVehData`
+  (`_congPopulateEmpresaSel`), so Congestión scope is decoupled from whatever
+  Archivo/company is loaded in Exposición.
+
+## Phase 3.5: Post-hoc schema correction and drill-down redesign (pre-commit, PR2 rework)
+
+Applied after Phase 3 was first marked done, before the PR2 branch was
+committed — reconciles code and docs with the real `congestion/vehiculos.csv`
+schema discovered while wiring PR2 against real data. See `design.md`'s
+"Design Revision" note and the amended `congestion-data-contract`/
+`congestion-camion` specs for full detail.
+
+- [x] 3.5.1 Correct `congestion/vehiculos.csv` schema across specs/design: real file is one row per TRIP (`id_viaje, owner_id, account_id, km_recorridos, mecc_veh_s`), not one row per vehicle with precomputed `iev`/`n_pasadas`/`hwy_share`/`peak_share` — that Phase 0 correction was itself based on an extracted UI sample (`window.DASH.vehicles[]`), not the real file.
+- [x] 3.5.2 Redesign the flat vehicle table into a 3-level cascading drill-down (`#cong-empresa-sel` → `#cong-camion-sel` → `#cong-viaje-sel`), since per-vehicle rows no longer exist in the raw data — `_congPopulateEmpresaSel`/`_congPopulateCamionSel`/`_congPopulateViajeSel` + `congOnEmpresaChange`/`congOnCamionChange`/`congOnViajeChange` + `_congRenderEmpresaLevel`/`_congRenderCamionLevel`/`_congRenderViajeLevel`.
+- [x] 3.5.3 Replace the "Ver en Exposición" cross-link button with `_congRenderVehicleRouteOverlay(ownerId)`: draws the focused Camión's real GPS route directly on the shared footprint map via the existing `owner_id → bus_id` reverse index.
+- [x] 3.5.4 `js/init.js`: wire the shared `gps-topbar` to show/hide GPS-only vs Congestión-only fields per sub-tab (`GPS_ONLY_TOPBAR_FIELDS`/`CONG_ONLY_TOPBAR_FIELDS`), and force `#gps-filters` visible while in Congestión regardless of whether an Archivo GPS is loaded.
+- [x] 3.5.5 Update `css/styles.css` for the new KPI card variants (bar/rank/delta) and the sortable table; remove now-unused `.cong-detalle-link`/`.cong-detalle-nomatch` styles from the dropped cross-link button.
 
 ## Phase 4: Empresa→Congestión (`congestion-empresa`)
 
@@ -84,8 +95,8 @@ Chain strategy: stacked-to-main
 
 - [ ] 6.1 All `congestion/*` present → Camión→Congestión renders KPIs, table, detail, map.
 - [ ] 6.2 Empresa→Congestión renders KPIs, gauge, rank card, map.
-- [ ] 6.3 Vehicle with matching `gps_vehicle_id` → "Ver en Exposición" jumps to that entity.
-- [ ] 6.4 Vehicle with no GPS match / GPS not loaded → row+detail render, no cross-link, no error.
+- [ ] 6.3 Camión with a matching `gpsLayers` `owner_id` selected → its real GPS route overlays the shared footprint map.
+- [ ] 6.4 Camión with no GPS match / GPS not loaded → Camión/Viaje levels render fully, no route overlay, no error.
 - [ ] 6.5 Company with no `congestion/empresas.csv` row → Empresa empty-state, no broken cards.
 - [ ] 6.6 `referencia.csv` absent → gauge hidden, rank card still renders.
 - [ ] 6.7 `vehiculos.csv` or `red_mecc.geojson` 404 → that widget's empty-state shows, siblings unaffected, no console error.

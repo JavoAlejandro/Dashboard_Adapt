@@ -1243,11 +1243,11 @@ select.pal-sel {
 }
 .temp-table .td-accent { color: var(--accent); font-weight: 700; }
 
-/* ── CONGESTIÓN — CAMIÓN: KPIs de flota (PR2) ────────────────────────────────*/
+/* ── CONGESTIÓN — CAMIÓN: KPIs de flota ───────────────────────────────────────*/
 #cong-veh-empty { height: auto; padding: 40px 24px; margin-bottom: 16px; }
 .cong-kpi-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
 .cong-kpi {
@@ -1255,23 +1255,42 @@ select.pal-sel {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 14px 16px;
-  display: flex; flex-direction: column; gap: 4px;
-}
-.cong-kpi-val {
-  font-family: 'Syne', sans-serif; font-weight: 800;
-  font-size: 24px; letter-spacing: -0.03em; color: var(--ink); line-height: 1;
+  display: flex; flex-direction: column; gap: 5px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 .cong-kpi-lbl {
   font-family: 'Syne Mono', monospace; font-size: 9px;
   letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
 }
-.cong-kpi-sub {
-  font-family: 'Syne Mono', monospace; font-size: 9px; color: var(--muted);
+.cong-kpi-val {
+  font-family: 'Syne', sans-serif; font-weight: 800;
+  font-size: 24px; letter-spacing: -0.03em; color: var(--ink); line-height: 1;
 }
+.cong-kpi-unit {
+  font-family: 'Syne Mono', monospace; font-weight: 600; font-size: 11px;
+  color: var(--muted); margin-left: 4px; letter-spacing: 0;
+}
+.cong-kpi-desc {
+  font-family: 'Syne Mono', monospace; font-size: 9px; color: var(--muted); line-height: 1.4;
+}
+.cong-kpi-bar {
+  height: 4px; border-radius: 2px; background: var(--border); margin-top: 2px;
+}
+.cong-kpi-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+.cong-kpi-bar-fill.rank { background: var(--male); }
+.cong-kpi-bar-scale {
+  display: flex; justify-content: space-between;
+  font-family: 'Syne Mono', monospace; font-size: 8px; color: var(--muted);
+}
+.cong-kpi-delta {
+  font-family: 'Syne Mono', monospace; font-size: 9px; font-weight: 700;
+}
+.cong-kpi-delta.good { color: var(--alt); }
+.cong-kpi-delta.bad  { color: var(--corr); }
 
 /* ── CONGESTIÓN — CAMIÓN: tabla de vehículos + detalle (PR2) ─────────────────*/
 .cong-table {
-  width: 100%; border-collapse: collapse;
+  width: 100%; border-collapse: collapse; table-layout: fixed;
   font-family: 'Syne Mono', monospace; font-size: 10px;
 }
 .cong-table th {
@@ -1287,7 +1306,8 @@ select.pal-sel {
 }
 .cong-table tr:last-child td { border-bottom: none; }
 .cong-table tr:nth-child(even) td { background: var(--bg); }
-.cong-table .td-num { text-align: right; font-weight: 700; color: var(--ink); }
+.cong-table .td-num { text-align: right; font-weight: 700; color: var(--ink); width: 130px; }
+.cong-table th.td-num { color: var(--bg); }
 .cong-tr-veh { cursor: pointer; transition: background 0.1s; }
 .cong-tr-veh:hover td { background: var(--emp-a-soft, rgba(232,160,32,0.07)); }
 .cong-tr-veh.active td { background: var(--emp-a-soft, rgba(232,160,32,0.12)); }
@@ -1305,8 +1325,4 @@ select.pal-sel {
 }
 .cong-detalle-val {
   font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; color: var(--ink);
-}
-.cong-detalle-link { display: flex; align-items: center; }
-.cong-detalle-nomatch {
-  font-family: 'Syne Mono', monospace; font-size: 10px; color: var(--muted);
 }

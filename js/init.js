@@ -20,11 +20,44 @@ function switchSubTab(name, btn) {
   }
 
   // Mes/Día del gps-topbar no aplican a los datos de ruido (ruta_arcos_por_vehiculo.csv
-  // y hexagonos_hora no se filtran por dia/mes) — ocultarlos solo en este sub-tab.
+  // y hexagonos_hora no se filtran por dia/mes) ni a los de congestión (vehiculos.csv
+  // no trae mes/día) — ocultarlos en ambos sub-tabs.
   ['gps-mes-lbl', 'gps-mes-sel', 'gps-dia-lbl', 'gps-dia-sel'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.style.display = (name === 'ruido') ? 'none' : '';
+    if (el) el.style.display = (name === 'ruido' || name === 'congestion') ? 'none' : '';
   });
+
+  // Congestión reemplaza Archivo/Empresa/Camión del gps-topbar compartido por
+  // su propio scope Empresa/Camión/Viaje (congestion/vehiculos.csv: id_viaje,
+  // owner_id, account_id — universo separado del Archivo GPS cargado arriba).
+  // Mismo topbar, solo cambian los campos visibles — mirror del hide/show que
+  // ya hace Ruido con Mes/Día, sin crear una barra nueva.
+  const GPS_ONLY_TOPBAR_FIELDS = [
+    'r2-sel-lbl', 'r2-empresa-sel', 'gps-status', 'stats-csv-status', 'h3-csv-status',
+    'gps-empresa-lbl', 'gps-empresa-sel', 'gps-bus-lbl', 'gps-bus-sel', 'btn-reset-filters',
+  ];
+  const CONG_ONLY_TOPBAR_FIELDS = [
+    'cong-empresa-lbl', 'cong-empresa-sel', 'cong-camion-lbl', 'cong-camion-sel',
+    'cong-viaje-lbl', 'cong-viaje-sel',
+  ];
+  GPS_ONLY_TOPBAR_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = (name === 'congestion') ? 'none' : '';
+  });
+  CONG_ONLY_TOPBAR_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = (name === 'congestion') ? '' : 'none';
+  });
+
+  // #gps-filters normalmente permanece oculto hasta que se carga un Archivo
+  // GPS (ver gps.js). Congestión no depende de eso — fuerza su visibilidad
+  // para que los 3 selects propios sean visibles incluso sin Archivo cargado;
+  // al salir, restaura según haya o no datos GPS cargados.
+  const gpsFiltersEl = document.getElementById('gps-filters');
+  if (gpsFiltersEl) {
+    gpsFiltersEl.style.display = (name === 'congestion') ? 'flex'
+      : (typeof gpsLayers === 'object' && Object.keys(gpsLayers).length ? 'flex' : 'none');
+  }
 
   // Entrando al sub-tab Ruido: inicializar mapa propio + cargar CSV (lazy) +
   // sincronizar con el camión actualmente seleccionado en Exposición
