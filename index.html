@@ -417,21 +417,29 @@
     </div>
   </div>
 
-  <!-- Mapa de huella de red — capa compartida con Empresa→Congestión (PR3) -->
-  <div id="map-cong-empty" class="gps-map-empty">
-    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-      <path d="M9 5v14"/><path d="M13 2v20"/><path d="M5 9v6"/><path d="M17 7v10"/><path d="M21 9v6"/>
-    </svg>
-    <p>Huella de congestión no disponible</p>
-    <span style="font-size:11px;color:var(--ink2)">congestion/red_mecc.geojson no fue encontrado en R2</span>
-  </div>
+  <!-- Mapa de huella de red — huella de la red vial Camión→Congestión.
+       _congMap/#map-cong es una única instancia Leaflet reubicada físicamente
+       por _congMountFootprintMap() dentro de este slot (única superficie que
+       lo usa hoy — la Empresa→Congestión sub-tab que originalmente iba a
+       compartir este mismo mapa vía un segundo slot fue revertida, ver
+       design.md "Design Revision — Phase 4 pivot"; los KPIs de Empresa ahora
+       viven en el sub-tab Global, sin mapa propio). -->
+  <div id="cong-map-slot-camion">
+    <div id="map-cong-empty" class="gps-map-empty">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+        <path d="M9 5v14"/><path d="M13 2v20"/><path d="M5 9v6"/><path d="M17 7v10"/><path d="M21 9v6"/>
+      </svg>
+      <p>Huella de congestión no disponible</p>
+      <span style="font-size:11px;color:var(--ink2)">congestion/red_mecc.geojson no fue encontrado en R2</span>
+    </div>
 
-  <div class="map-gps-wrap" id="map-cong-wrap" style="position:relative;display:none">
-    <div id="map-cong" style="height:480px;border:1px solid var(--border);border-radius:4px"></div>
-    <div class="cong-legend" id="cong-legend">
-      <div class="cong-legend-title">Carga vial (mecc)</div>
-      <div class="cong-legend-bar"></div>
-      <div class="cong-legend-labels"><span>bajo</span><span>alto</span></div>
+    <div class="map-gps-wrap" id="map-cong-wrap" style="position:relative;display:none">
+      <div id="map-cong" style="height:480px;border:1px solid var(--border);border-radius:4px"></div>
+      <div class="cong-legend" id="cong-legend">
+        <div class="cong-legend-title">Carga vial (mecc)</div>
+        <div class="cong-legend-bar"></div>
+        <div class="cong-legend-labels"><span>bajo</span><span>alto</span></div>
+      </div>
     </div>
   </div>
 </div>
@@ -691,6 +699,54 @@
       Aguja = valor actual · línea punteada = referencia contrafactual · más alto es peor
     </div>
     <div id="cmp-kpi-status"
+         style="font-family:'Syne Mono',monospace;font-size:9px;color:var(--muted);
+                margin-top:4px"></div>
+  </div>
+
+  <!-- ── TARJETAS DE CONGESTIÓN — Empresa, sin dependencia temporal ──
+       Reusa el mismo sistema de tarjetas .cong-kpi/.cong-kpi-row que Camión→
+       Congestión (#cong-kpi-row, congestion.js): _congRenderKpis(cards,
+       containerId) pinta stat/bar/rank según la métrica — NO un gauge SVG
+       (ver design.md "Design Revision" — el gauge grid original fue
+       reemplazado por este sistema, ya probado en la superficie Camión, en
+       vez de forzar cada métrica en el mismo widget de velocímetro). Datos
+       desde congestion/empresas.csv, cargados lazily vía congEnsureLoaded()
+       la primera vez que se necesita. Cada empresa monta en su propio
+       #cmp-cong-kpi-row-a/b vía _congBuildCompanyCards()/
+       _congCompanyCardsUpdate() (congestion.js). Las métricas mostradas
+       (mecc, iev, n_veh, km, hwy_share, peak_share) no dependen de un
+       periodo/mes — ver congestion-data-contract: ni empresas.csv ni
+       vehiculos.csv traen columna temporal alguna. -->
+  <div id="cmp-cong-kpi-section" style="display:none;margin-top:16px">
+    <div style="display:flex;gap:16px;align-items:flex-start">
+
+      <!-- Empresa A -->
+      <div style="flex:1;min-width:0">
+        <div id="cmp-cong-kpi-head-a"
+             style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.1em;
+                    text-transform:uppercase;color:var(--accent);margin-bottom:8px">
+          Congestión — Empresa A
+        </div>
+        <div class="cong-kpi-row" id="cmp-cong-kpi-row-a"></div>
+      </div>
+
+      <!-- Empresa B -->
+      <div style="flex:1;min-width:0">
+        <div id="cmp-cong-kpi-head-b"
+             style="font-family:'Syne Mono',monospace;font-size:9px;letter-spacing:0.1em;
+                    text-transform:uppercase;color:var(--alt);margin-bottom:8px">
+          Congestión — Empresa B
+        </div>
+        <div class="cong-kpi-row" id="cmp-cong-kpi-row-b"></div>
+      </div>
+
+    </div>
+    <div id="cmp-cong-kpi-note"
+         style="font-family:'Syne Mono',monospace;font-size:9px;color:var(--muted);
+                margin-top:10px;line-height:1.5">
+      IEV comparado contra el promedio ciudad · Ranking comparado contra empresas comparables · sin dependencia de periodo
+    </div>
+    <div id="cmp-cong-kpi-status"
          style="font-family:'Syne Mono',monospace;font-size:9px;color:var(--muted);
                 margin-top:4px"></div>
   </div>

@@ -1089,5 +1089,15 @@ async function _kpiUpdateGrids() {
 
   if (empA) _kpiRenderGrid('cmp-kpi-grid-a', empA);
   if (empB) _kpiRenderGrid('cmp-kpi-grid-b', empB);
+
+  // Congestión — tarjetas de empresa (stat/bar/rank, mismo sistema que
+  // Camión→Congestión) en paralelo, sin dependencia temporal (ver design.md
+  // "Design Revision — Phase 4 pivot" y su revisión posterior gauge→cards).
+  // Fire-and-forget: no bloquea el render de las grillas de Ruido de arriba;
+  // congestion.js carga sus propios artifacts (congEnsureLoaded, lazy) la
+  // primera vez que se necesita. Guard defensivo por si congestion.js aún no
+  // cargó (orden de <script> en index.html lo garantiza, pero esto documenta
+  // la dependencia).
+  if (typeof _congCompanyCardsUpdate === 'function') _congCompanyCardsUpdate();
 }
 

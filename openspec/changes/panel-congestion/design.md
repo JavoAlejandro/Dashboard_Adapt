@@ -41,6 +41,195 @@ The "Vehicle Cross-link Design", "Data Flow", "Interfaces / Contracts", and
 this revision — they now describe the actually-shipped trip-grained schema,
 drill-down, and map-overlay mechanism, not the original plan.
 
+## Design Revision (PR3 apply — Empresa sub-tab reverted, Global-grid integration)
+
+Phase 4 ("Empresa→Congestión") was implemented once exactly as originally
+designed below: a third `#sub-tabs-empresa` button (`#cmp-subtab-congestion`)
+opening a dedicated `#cmp-subpanel-congestion` panel with its own company
+selector (`#cmp-cong-empresa-sel`), KPI cards (`_congRenderKpis`, reusing the
+Camión `.cong-kpi*` markup), a discrete rank/benchmark card, an optional
+percentile gauge (`_congRenderEmpresaGauges`/`CONG_GAUGE_METRICS`), and a
+relocated mount of the shared footprint map (`cong-map-slot-empresa` via
+`_congMountFootprintMap`).
+
+**The user rejected this in-browser after reviewing it** (2026-07-22): a
+fourth surface duplicating navigation for data that has no drill-down of its
+own is unwanted UI sprawl. The explicit direction was: company-level
+congestion KPIs with **no time-period dependency** must live in the Empresa
+tab's existing **Global** sub-tab, styled/structured like the existing Ruido
+KPI gauge grid (`cmp-kpi-grid-a`/`cmp-kpi-grid-b`, `KPI_LIST`/
+`_kpiRenderGrid`/`_kpiSvgGauge` in `js/comparativas.js`) — and if any
+congestion metric were period-dependent, it should integrate into the
+Temporal sub-tab instead. No new sub-tab or panel.
+
+**Data-contract check before redesigning (documented fact, not a gap):** the
+frozen `congestion-data-contract` spec's `congestion/empresas.csv`
+(`account_id,n_veh,km,mecc,iev,rank,hwy_share,peak_share,calles_top_share,
+n_comparables,iev_global`) and `congestion/vehiculos.csv`
+(`id_viaje,owner_id,account_id,km_recorridos,mecc_veh_s`) carry **no
+month/period column in either file**. So there is currently nothing
+period-dependent to integrate into Temporal — this PR does not invent one;
+`congestion-empresa/spec.md`'s amendment documents this explicitly as "not
+applicable until/unless the contract adds one," not unbuilt scope.
+
+**What changed, concretely:**
+
+1. **Removed** (sub-tab teardown): `#cmp-subtab-congestion` button and
+   `#cmp-subpanel-congestion` panel (`index.html`); `switchCmpSubTab`'s
+   `congestion` branch (`comparativas.js`); `congOnEmpresaTabEnter()`,
+   `_congPopulateCmpEmpresaSel()`, `congOnCmpEmpresaChange()`,
+   `_congBuildCompanyKpiCards()`, `congRenderEmpresaCongPanel()`,
+   `_congRenderEmpresaGauges()`, `CONG_GAUGE_METRICS` (`congestion.js`); the
+   `cong-map-slot-empresa` mount point and its relocation call (the
+   `_congMountFootprintMap(slotId)` helper itself is kept — it is still used
+   by Camión→Congestión's own `cong-map-slot-camion` mount, so it was a
+   shared building block, not sub-tab-specific).
+2. **Kept and reused** as building blocks for the new approach:
+   `_congPctFromRef()` (percentile interpolation against
+   `congestion/referencia.csv`'s p10..p90 — the same function, unmodified),
+   `congEnsureLoaded()` (already idempotent/lazy, no changes needed), and
+   `_kpiSvgGauge()` from `comparativas.js` (pure SVG builder, reused
+   unmodified exactly as before).
+3. **Added** (Global-grid integration): a `CONG_KPI_LIST` array (parallel to
+   Ruido's `KPI_LIST`) covering the six no-period-dependency metrics `mecc`,
+   `iev`, `n_veh`, `km`, `hwy_share`, `peak_share` — `rank`,
+   `calles_top_share`, `n_comparables`, `iev_global` were left out (no clear
+   single-gauge reading for a ranking/share-of-top-streets figure; see
+   `congestion-empresa/spec.md`'s "Explicitly Out of Scope" requirement for
+   the full reasoning). A new `_congKpiRenderGrid(containerId, accountId)`
+   mirrors `_kpiRenderGrid()`'s exact fallback convention (always renders all
+   six cards, `—` when data/row is missing, gauge needle defaults to the
+   median via `_kpiSvgGauge`'s existing `pct ?? 50` fallback — no new
+   fallback logic needed). A new `_congKpiUpdateGrids()` mirrors
+   `_kpiUpdateGrids()`'s show/hide-by-selection and header-update logic, and
+   is invoked from `_kpiUpdateGrids()` itself via a guarded, unawaited call
+   (`if (typeof _congKpiUpdateGrids === 'function') _congKpiUpdateGrids();`)
+   so it fires on the same `#cmp-emp-a`/`#cmp-emp-b` `onchange` trigger as the
+   Ruido grid, without blocking it. New markup: `#cmp-cong-kpi-section`
+   (`#cmp-cong-kpi-grid-a`/`#cmp-cong-kpi-grid-b`), placed inside
+   `#cmp-subpanel-global` immediately after the existing `#cmp-kpi-section`
+   (Ruido), reusing the exact same `.kpi-gauge-card`/`.kpi-gl`/`.kpi-gv`/
+   `.kpi-gp` CSS — no new CSS was required.
+4. **Structural separation, by design:** `CONG_KPI_LIST` and
+   `cmp-cong-kpi-grid-a`/`b` are a genuinely separate array/container from
+   Ruido's `KPI_LIST`/`cmp-kpi-grid-a`/`b`, per explicit user direction — the
+   two are different data domains (congestion vs ruido) and must not be
+   merged into one list, even though they render adjacently with the same
+   visual language.
+
+**Alternatives considered and rejected:** merging `CONG_KPI_LIST` items into
+the existing `KPI_LIST` array — rejected, different data domain and different
+source files (`congestion/empresas.csv`+`referencia.csv` vs
+`ruido/dashboard_kpis_*.csv`), would also require `_kpiRenderGrid()` to
+special-case field lookup by domain. Keeping the footprint map mounted in
+Empresa via a second `_congMountFootprintMap('cong-map-slot-empresa')` call
+inside the new Global-grid flow — rejected, the user's direction was KPIs
+only ("los kpis... esten en global"), no map was requested for this
+integration, and a map next to two independent company selects with no
+shared "compare" action would need its own design pass.
+
+**Rollback boundary:** revert `index.html`'s new `#cmp-cong-kpi-section`
+block and the removed `#cmp-subtab-congestion`/`#cmp-subpanel-congestion`
+block; revert `comparativas.js`'s `_kpiUpdateGrids()` call-out and the
+removed `switchCmpSubTab` branch; revert `congestion.js`'s `CONG_KPI_LIST`/
+`_congKpiRenderGrid`/`_congKpiUpdateGrids` addition and the removed Empresa
+sub-tab functions. PR1 (foundation) and PR2 (Camión) stand alone, fully
+unaffected — no function shared with Camión→Congestión's drill-down was
+touched, only the shared-but-generic `_congMountFootprintMap()`, whose
+Camión call site (`congOnTabEnter()` → `cong-map-slot-camion`) is unchanged.
+
+## Design Revision (PR3 apply, second refinement — gauge grid rejected, reuse `_congRenderKpis` card system)
+
+The Global-grid integration above (previous "Design Revision" section) was
+implemented once exactly as described: a velocímetro grid (`CONG_KPI_LIST`,
+`_congKpiRenderGrid()`, `_congKpiUpdateGrids()`) mirroring Ruido's
+`_kpiSvgGauge()` pattern, mounted at `#cmp-cong-kpi-grid-a`/
+`#cmp-cong-kpi-grid-b` inside `#cmp-subpanel-global`.
+
+**The user rejected this before it was even shown in-browser** (2026-07-22),
+after the plan was described: *"no quiero que necesariamente los kpis de
+congestion tambien se visualize como una grilla de velocímetros. unicamente
+usa la mejor visualización para ellos"* — do not force every congestion KPI
+into a gauge grid; use the best visualization per metric.
+
+**Key discovery grounding the fix:** `congestion.js` already had a proven,
+multi-format KPI card system for exactly this data — Camión→Congestión's own
+Empresa-level drill-down (`_congRenderEmpresaLevel`, PR2) builds a `cards`
+array with three visual kinds (`stat` — plain value + description; `bar` —
+value + 0→scale progress bar + delta line, used for IEV vs the city-wide
+`iev_global`; `rank` — value "N / total" + position bar, used for the city
+ranking) and renders them via the already-generic `_congRenderKpis(cards,
+containerId)`. This is "the best visualization per metric" already solved for
+the same `_congEmpData` fields (`mecc, km, n_veh, iev, iev_global, rank,
+n_comparables`) on a sibling surface — reusing it avoids inventing a fourth
+visual system for the same data.
+
+**What changed, concretely:**
+
+1. **Removed** (gauge-grid teardown): `CONG_KPI_LIST`, `_congKpiRenderGrid()`,
+   `_congKpiUpdateGrids()`, `_congPctFromRef()` (`congestion.js`, the last of
+   these existed only to feed the gauge needle position); the guarded call to
+   `_congKpiUpdateGrids()` in `comparativas.js`'s `_kpiUpdateGrids()`; the
+   `#cmp-cong-kpi-grid-a`/`#cmp-cong-kpi-grid-b` grid markup in `index.html`.
+   `_kpiSvgGauge()` itself (Ruido's own function, `comparativas.js`) is
+   **untouched** — it is simply no longer called by congestion code.
+2. **Extracted** `_congBuildCompanyCards(accountId)` out of
+   `_congRenderEmpresaLevel`'s inline card-construction logic — same cards,
+   same order, same values, pure extraction (no behavior change for the
+   Camión-tab surface; `_congRenderEmpresaLevel` now just calls
+   `_congRenderKpis(_congBuildCompanyCards(accountId))`). This makes
+   `_congBuildCompanyCards` the single source of truth for "what does a
+   company's congestion card set look like," reused by both Camión's own
+   Empresa-level view and the Global integration.
+3. **Added** two more cards to `_congBuildCompanyCards` for `hwy_share` and
+   `peak_share` (originally part of the intended metric set — `mecc, iev,
+   n_veh, km, hwy_share, peak_share` — but not yet on
+   `_congRenderEmpresaLevel`'s cards before this revision): both render as
+   `kind: 'stat'` with a `%` unit, not `kind: 'bar'`. Reasoning: in this
+   module, `'bar'` always encodes a value **against an external reference or
+   scale** (IEV vs `iev_global`, rank vs `n_comparables`) — the fill
+   communicates a comparison. `hwy_share`/`peak_share` have no such reference;
+   they are already self-contained percentages with nothing to compare
+   against, so a self-referential 0–100% bar (fill = the value itself) would
+   be redundant with the `%`-suffixed number, not additional information.
+4. **Mounted** two new `.cong-kpi-row` containers in `#cmp-subpanel-global`
+   (`#cmp-cong-kpi-row-a`/`#cmp-cong-kpi-row-b`, replacing the removed
+   `#cmp-cong-kpi-grid-a`/`b`), reusing the exact same `.cong-kpi`/
+   `.cong-kpi-row` CSS that Camión's own `#cong-kpi-row` already uses — no new
+   CSS required, since `_congRenderKpis(cards, containerId)` already accepts
+   an arbitrary `containerId`.
+5. **Renamed/rewired the update entry point**: `_congKpiUpdateGrids()` →
+   `_congCompanyCardsUpdate()`, same trigger (`_kpiUpdateGrids()` in
+   `comparativas.js`, guarded `typeof` check, fire-and-forget), same
+   show/hide-by-selection and header-update logic, but now calls
+   `_congRenderKpis(_congBuildCompanyCards(accountId), containerId)` per
+   company instead of `_congKpiRenderGrid()`.
+6. **Graceful degradation unchanged in spirit:** no `_congEmpData` row for a
+   company → `_congBuildCompanyCards` returns `[]` → `_congRenderKpis([])`
+   clears the container (same behavior already relied upon by the Viaje level
+   at `_congRenderKpis([])`, `_congRenderViajeLevel`) — no throw, no
+   `—`-placeholder cards like the gauge grid used to render. This is a
+   graceful-degradation *behavior* change from the gauge-grid version (which
+   always rendered 6 dashed-out cards) — accepted as consistent with how the
+   rest of `_congRenderKpis`'s call sites already treat an empty `cards[]`.
+
+**Alternatives considered and rejected:** keeping the gauge grid for
+percentage fields only (`hwy_share`/`peak_share`) and cards for the rest —
+rejected, would reintroduce a second visual system for two fields alone,
+against the user's explicit "no forced gauge grid" direction, and
+`_congPctFromRef`/`referencia.csv` percentile positioning would need to stay
+just for those two gauges while everything else moved off it — not worth the
+complexity for two fields when `stat` cards already read clearly.
+
+**Rollback boundary:** revert `congestion.js`'s `_congBuildCompanyCards`/
+`_congCompanyCardsUpdate` addition and the `_congRenderEmpresaLevel`
+extraction (restores the inline card-building + `CONG_KPI_LIST`/
+`_congKpiRenderGrid`/`_congKpiUpdateGrids` from the previous revision, if
+that revision's own commit is also reverted); revert `comparativas.js`'s
+`_congCompanyCardsUpdate` call-out; revert `index.html`'s
+`#cmp-cong-kpi-row-a`/`b` markup. PR1/PR2 and the rest of PR3 (Empresa
+sub-tab teardown, Global-grid mount point) are unaffected.
+
 ## Technical Approach
 
 One new domain file `js/congestion.js` owns fetch + aggregation + render for both levels, mirroring the established one-file-per-domain convention (`ruido.js`, `temporal.js`). It lazy-loads once on first open of either Congestión surface (`ruidoEnsureLoaded()` idiom), pulls the `congestion/` CSVs + geojson additively through `core.js` `fetchParseCsv`/`r2Fetch`, reuses `TOKENS` and the `comparativas.js` percentile-gauge precedent, and degrades gracefully when data is absent (`ruido.js` mirror). Zero architecture drift: no build step, fixed `<script>` order preserved, all I/O token-gated. Firm constraints 1–4 from the proposal are treated as fixed.

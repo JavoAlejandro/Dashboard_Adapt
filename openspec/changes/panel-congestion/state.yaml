@@ -17,8 +17,8 @@ pr_split:
   - pr: 3
     name: feature/congestion-panel-pr3-empresa
     base: feature/congestion-panel-pr2-camion
-    scope: Phase 4 (Empresa→Congestión) + its CSS (subset of 5.1) + Phase 6 (manual verification, full checklist run at the end)
-    status: pending — fully untouched, not started
+    scope: Phase 4 (company congestion KPIs in Empresa→Global, reworked from the original sub-tab plan) + Phase 4.5 (post-hoc redesign note) + Phase 4.6 (second post-hoc redesign — gauge grid → card system) + its CSS (subset of 5.1, none new required) + Phase 6 (manual verification, full checklist run at the end)
+    status: applied — Phase 4 built once as a dedicated Empresa Congestión sub-tab, then reworked into a Global-sub-tab velocímetro KPI grid, then reworked a second time into a stat/bar/rank card system reusing Camión's own `_congRenderKpis`, per two rounds of user feedback (2026-07-22); code + docs reconciled, ready to commit, not yet reviewed/pushed
 note: "CSS (Phase 5) is not a separate PR — each subtask lands with its corresponding markup/JS in the PR that introduces it, not all bundled at the end. Branch names renamed from pr1/2/3-* to feature/congestion-panel-prN-* to match this repo's real precedent (refactor/empresa-panel-pr1-foundation etc.) — no CI enforces a naming regex here, no .github/ workflows exist in this repo."
 schema_correction:
   status: applied (2026-07-22)
@@ -34,6 +34,52 @@ schema_correction:
     - "design.md: Design Revision note added; Vehicle Cross-link Design, Data Flow, Interfaces, and Module state sections updated to match."
     - "tasks.md: Phase 3.1-3.5 task text corrected to describe the drill-down/overlay design; new Phase 3.5 added documenting the rework explicitly."
     - "congestion-empresa/spec.md and congestion-footprint-map/spec.md: reviewed, no invalidated assumptions found — left unchanged (Phase 4/Empresa is untouched and does not yet consume vehiculos.csv)."
+empresa_subtab_reversal:
+  status: applied (2026-07-22)
+  summary: >
+    Phase 4 was first implemented exactly as designed: a dedicated 3rd
+    "Congestión" sub-tab under Empresa (#cmp-subtab-congestion /
+    #cmp-subpanel-congestion) with its own KPI cards, rank/benchmark card,
+    percentile gauge, and a relocated company-scoped mount of the shared
+    footprint map. The user reviewed it in-browser and rejected it: no new
+    sub-tab/panel — company-level congestion KPIs with no time-period
+    dependency belong in the Empresa tab's existing Global sub-tab, styled
+    like the existing Ruido KPI gauge grid (cmp-kpi-grid-a/b). Confirmed fact
+    (not a gap): neither congestion/empresas.csv nor congestion/vehiculos.csv
+    has a period/month column in the frozen data contract, so no
+    period-dependent congestion metric currently exists to integrate into
+    the Temporal sub-tab.
+  impact:
+    - "index.html: removed #cmp-subtab-congestion button + #cmp-subpanel-congestion panel; added #cmp-cong-kpi-section (#cmp-cong-kpi-grid-a/b) inside #cmp-subpanel-global, after the existing Ruido #cmp-kpi-section."
+    - "js/comparativas.js: removed switchCmpSubTab's congestion branch; _kpiUpdateGrids() now also calls _congKpiUpdateGrids() (congestion.js) via a guarded, unawaited call."
+    - "js/congestion.js: removed congOnEmpresaTabEnter/_congPopulateCmpEmpresaSel/congOnCmpEmpresaChange/_congBuildCompanyKpiCards/congRenderEmpresaCongPanel/_congRenderEmpresaGauges/CONG_GAUGE_METRICS (sub-tab-only); kept _congPctFromRef (reused) and _congMountFootprintMap (still used by Camión→Congestión, only the Empresa call site was removed); added CONG_KPI_LIST, _congKpiRenderGrid, _congKpiUpdateGrids mirroring comparativas.js's Ruido KPI system."
+    - "congestion-empresa/spec.md: full amendment — Requirements rewritten to describe the Global-grid integration; new requirement documents Temporal integration as not currently applicable; new requirement lists the superseded sub-tab elements as explicitly out of scope."
+    - "congestion-footprint-map/spec.md: amendment noting the shared footprint map is, as of this change, mounted only by congestion-camion (the Empresa mount point/slot was removed); rendering functions remain genuinely unmodified and generic."
+    - "design.md: new 'Design Revision (PR3 apply)' section appended after the existing PR2 revision section — does not delete PR2's history."
+    - "tasks.md: Phase 4.1-4.5 task text rewritten to describe the Global-grid integration; original sub-tab task text preserved verbatim inside the new Phase 4.5 section; Phase 5.1 and Phase 6 checklist items corrected to match."
+    - "css/styles.css: no changes required — the Global-integrated grid reuses .kpi-gauge-card/.kpi-gl/.kpi-gv/.kpi-gp unmodified; the .cong-kpi* classes remain Camión-only."
+  camion_confirmed_untouched: true
+empresa_kpi_card_refinement:
+  status: applied (2026-07-22, same day as empresa_subtab_reversal)
+  summary: >
+    The Global-grid velocímetro integration above (empresa_subtab_reversal)
+    was implemented once exactly as designed. The user rejected it before it
+    was shown in-browser: "no quiero que necesariamente los kpis de
+    congestion tambien se visualize como una grilla de velocímetros.
+    unicamente usa la mejor visualización para ellos." Replaced with a reuse
+    of Camión→Congestión's own proven stat/bar/rank card system
+    (_congRenderKpis), via a new shared builder _congBuildCompanyCards()
+    extracted from _congRenderEmpresaLevel (pure extraction, identical
+    Camión-tab output before/after) and reused by both surfaces.
+  impact:
+    - "js/congestion.js: removed CONG_KPI_LIST, _congKpiRenderGrid(), _congKpiUpdateGrids(), _congPctFromRef(); added _congBuildCompanyCards(accountId) (extracted from _congRenderEmpresaLevel, now also covers hwy_share/peak_share as new 'stat' cards) and _congCompanyCardsUpdate() (renamed from _congKpiUpdateGrids, same trigger, now calls _congRenderKpis per company)."
+    - "js/comparativas.js: _kpiUpdateGrids()'s guarded call switched from _congKpiUpdateGrids() to _congCompanyCardsUpdate()."
+    - "index.html: #cmp-cong-kpi-grid-a/b (gauge grid containers) replaced with #cmp-cong-kpi-row-a/b (.cong-kpi-row containers, same markup convention as Camión's #cong-kpi-row) inside the unchanged #cmp-cong-kpi-section wrapper."
+    - "congestion-empresa/spec.md: Amendment 2 added — Requirements rewritten to describe the card system (stat/bar/rank), corrected element ids, rank card now included (shared builder), referencia.csv/percentile dependency removed from this integration's scope."
+    - "design.md: second 'Design Revision (PR3 apply, second refinement)' section appended after the first PR3 revision — does not delete that history."
+    - "tasks.md: Phase 4.6 added (post-hoc redesign), Phase 4's original velocímetro-grid task text marked superseded but kept verbatim; Phase 5.1 and Phase 6 checklist items corrected to match."
+    - "css/styles.css: no changes required — the card rows reuse .cong-kpi/.cong-kpi-row unmodified, same classes as Camión's #cong-kpi-row."
+  camion_render_empresa_level_output_unchanged: true
 phases:
   explore:
     status: done
@@ -46,9 +92,9 @@ phases:
   tasks:
     status: done
   apply:
-    status: in_progress — PR1 applied+reviewed, not yet pushed; PR2 applied and reworked (Phase 3 + 3.5 done, [x] in tasks.md; code + docs reconciled with real vehiculos.csv schema), ready to commit, not yet reviewed/pushed; PR3 (Phase 4, Empresa) fully pending, not started
+    status: in_progress — PR1 applied; PR2 applied+reworked and committed (253d21d, b3211e8) on feature/congestion-panel-pr3-empresa (built on top of pr2-camion); PR3 (Phase 4, company congestion KPIs) applied and reworked TWICE in-branch — built once as an Empresa Congestión sub-tab (reverted), then as a Global-sub-tab velocímetro grid (also reverted), then as a Global-sub-tab stat/bar/rank card system reusing Camión's own _congRenderKpis, per two rounds of user feedback (2026-07-22); code + docs reconciled, ready to commit, not yet reviewed/pushed
   verify:
     status: pending
   archive:
     status: pending
-next_recommended: commit PR2 rework on feature/congestion-panel-pr2-camion; push PR1, open PR; review PR2 (no valid receipt yet); then sdd-apply Phase 4 for PR3 (Empresa→Congestión)
+next_recommended: commit the PR3 rework (sub-tab reversal + card-system integration) on feature/congestion-panel-pr3-empresa; then sdd-verify against the amended congestion-empresa spec (Amendment 2); review has no valid receipt yet for this branch's diff

@@ -197,6 +197,29 @@ function congRenderFootprint() {
   } catch (e) { /* geometría vacía o inválida — mantener vista por defecto */ }
 }
 
+// Reubica físicamente el bloque de la huella (#map-cong-empty + #map-cong-wrap,
+// que a su vez contiene #map-cong) dentro del slot de la superficie activa.
+// Hoy solo 'cong-map-slot-camion' (Camión→Congestión) existe en el DOM — la
+// Empresa→Congestión sub-tab que originalmente iba a reusar este mismo mapa
+// vía 'cong-map-slot-empresa' fue revertida (ver design.md "Design Revision
+// — Phase 4 pivot"); los KPIs de empresa ahora viven en el sub-tab Global sin
+// mapa propio. Función queda genérica (recibe slotId) por si una futura
+// superficie necesita reubicar el mismo mapa compartido. _congMap es una
+// única instancia Leaflet (design.md: "footprint map — network-level and
+// shared", sin filtro por empresa): el mismo nodo DOM se mueve al panel
+// visible, dejando congInitMap()/congRenderFootprint() genuinamente sin
+// modificar (siguen resolviendo 'map-cong'/'map-cong-wrap'/'map-cong-empty'
+// por id fijo). No-op si el slot ya es el padre actual, o si algún elemento
+// no está montado.
+function _congMountFootprintMap(slotId) {
+  const slot  = document.getElementById(slotId);
+  const empty = document.getElementById('map-cong-empty');
+  const wrap  = document.getElementById('map-cong-wrap');
+  if (!slot || !empty || !wrap) return;
+  if (empty.parentElement !== slot) slot.appendChild(empty);
+  if (wrap.parentElement  !== slot) slot.appendChild(wrap);
+}
+
 // Overlay de la ruta GPS real del camión en foco, encima de la huella de red.
 // Usa gpsLayers (gps.js) — el mismo cruce owner_id → bus_id que ya arma
 // _congBuildByOwner() — así que solo dibuja algo si ese Archivo GPS ya está
@@ -235,10 +258,16 @@ function _congRenderVehicleRouteOverlay(ownerId) {
   } catch (e) { /* geometría no lista aún — mantener vista actual */ }
 }
 
-// ─── ENTRADA A CUALQUIER SUPERFICIE CONGESTIÓN (Camión o Empresa) ────────────
-// Llamado desde switchSubTab (Camión) y, en PR3, desde switchCmpSubTab (Empresa).
+// ─── ENTRADA A CONGESTIÓN — Camión (única superficie con drill-down propio) ──
+// Llamado desde switchSubTab (Camión→Congestión, sub-tab dentro del tab
+// Camión). La Empresa-side integration (Phase 4) does NOT have an equivalent
+// "tab enter" hook — it is a set of congestion cards embedded in the existing
+// Empresa→Global sub-tab, driven by _congCompanyCardsUpdate() from
+// comparativas.js's _kpiUpdateGrids(), not by its own sub-tab entry point
+// (see design.md "Design Revision — Phase 4 pivot").
 async function congOnTabEnter() {
   await congEnsureLoaded();
+  _congMountFootprintMap('cong-map-slot-camion');
   congRenderFootprint();
 
   // Camión→Congestión: selector Empresa/Camión/Viaje + KPIs/tabla. No-op
@@ -420,40 +449,71 @@ const _CONG_VIAJE_COLS = [
   { key: 'mecc',      lbl: 'MECC', num: true },
 ];
 
+// ── Constructor compartido de tarjetas de congestión a nivel EMPRESA ───────
+// Única fuente de verdad para "cómo se ve el set de tarjetas de congestión de
+// una empresa" — reusado por _congRenderEmpresaLevel (Camión→Congestión, su
+// propio drill-down) y por _congCompanyCardsUpdate (integración en el sub-tab
+// Global de Empresa, ver bloque más abajo). Devuelve [] si no hay fila en
+// _congEmpData para ese account_id (graceful degradation — ambas superficies
+// delegan a _congRenderKpis([]), que limpia el container sin lanzar).
+function _congBuildCompanyCards(accountId) {
+  const emp = _congEmpData.get(accountId);
+  const cards = [];
+  if (!emp) return cards;
+
+  if (emp.iev != null && emp.iev_global) {
+    const iev    = Number(emp.iev);
+    const global = Number(emp.iev_global);
+    const diffPct = ((iev - global) / global) * 100;
+    cards.push({
+      kind: 'bar', lbl: 'IEV', val: _congFmtNum(iev, 3),
+      fillPct: (iev / global) * 100, scaleMin: '0', scaleMax: `ciudad ${_congFmtNum(global, 4)}`,
+      delta: {
+        arrow: diffPct <= 0 ? '▼' : '▲',
+        cls: diffPct <= 0 ? 'good' : 'bad',
+        text: `${_congFmtNum(Math.abs(diffPct), 0)}% vs promedio ciudad`,
+      },
+    });
+  }
+  cards.push({ kind: 'stat', lbl: 'MECC', val: _congFmtNum(emp.mecc, 2), desc: ['carga vial acumulada de la empresa'] });
+  cards.push({ kind: 'stat', lbl: 'Distancia', val: _congFmtNum(emp.km, 0), unit: 'km', desc: ['km recorridos en la red'] });
+  cards.push({ kind: 'stat', lbl: 'Vehículos', val: emp.n_veh != null ? String(emp.n_veh) : '—', desc: ['en la flota'] });
+  if (emp.rank != null && emp.n_comparables) {
+    const rank = Number(emp.rank), total = Number(emp.n_comparables);
+    const percentile = Math.round(((total - rank) / total) * 100);
+    cards.push({
+      kind: 'rank', lbl: 'Ranking ciudad', val: String(rank), unit: `/ ${total}`,
+      fillPct: ((total - rank) / total) * 100,
+      desc: [`más eficiente que el ${percentile}% de operadores comparables`],
+    });
+  }
+  // hwy_share / peak_share — porcentajes 0-100 acotados (a diferencia de
+  // MECC/Km/Vehículos, que no tienen techo natural). 'stat' plano (no 'bar')
+  // porque no hay una referencia externa contra la cual barrear el fill —
+  // 'bar' en este módulo siempre representa "valor vs escala/otro punto"
+  // (IEV vs iev_global, rank vs total); acá solo hay el propio porcentaje,
+  // así que una barra de 0-100% no agregaría información sobre una cifra que
+  // ya es, por definición, un porcentaje — el % en el valor ya comunica la
+  // proporción sin necesitar refuerzo visual redundante.
+  if (emp.hwy_share != null && !isNaN(Number(emp.hwy_share))) {
+    cards.push({
+      kind: 'stat', lbl: '% vías rápidas', val: _congFmtNum(Number(emp.hwy_share) * 100, 0), unit: '%',
+      desc: ['proporción de la carga vial en autopistas/vías rápidas'],
+    });
+  }
+  if (emp.peak_share != null && !isNaN(Number(emp.peak_share))) {
+    cards.push({
+      kind: 'stat', lbl: '% hora punta', val: _congFmtNum(Number(emp.peak_share) * 100, 0), unit: '%',
+      desc: ['proporción de la carga vial concentrada en horas punta'],
+    });
+  }
+  return cards;
+}
+
 // ── Nivel EMPRESA (Camión = "todos") — KPIs desde empresas.csv (precomputado,
 // nunca recalculado) + tabla de camiones agregada desde vehiculos.csv ──────
 function _congRenderEmpresaLevel(accountId, companyRows) {
-  const emp = _congEmpData.get(accountId);
-  const cards = [];
-  if (emp) {
-    if (emp.iev != null && emp.iev_global) {
-      const iev    = Number(emp.iev);
-      const global = Number(emp.iev_global);
-      const diffPct = ((iev - global) / global) * 100;
-      cards.push({
-        kind: 'bar', lbl: 'IEV', val: _congFmtNum(iev, 3),
-        fillPct: (iev / global) * 100, scaleMin: '0', scaleMax: `ciudad ${_congFmtNum(global, 4)}`,
-        delta: {
-          arrow: diffPct <= 0 ? '▼' : '▲',
-          cls: diffPct <= 0 ? 'good' : 'bad',
-          text: `${_congFmtNum(Math.abs(diffPct), 0)}% vs promedio ciudad`,
-        },
-      });
-    }
-    cards.push({ kind: 'stat', lbl: 'MECC', val: _congFmtNum(emp.mecc, 2), desc: ['carga vial acumulada de la empresa'] });
-    cards.push({ kind: 'stat', lbl: 'Distancia', val: _congFmtNum(emp.km, 0), unit: 'km', desc: ['km recorridos en la red'] });
-    cards.push({ kind: 'stat', lbl: 'Vehículos', val: emp.n_veh != null ? String(emp.n_veh) : '—', desc: ['en la flota'] });
-    if (emp.rank != null && emp.n_comparables) {
-      const rank = Number(emp.rank), total = Number(emp.n_comparables);
-      const percentile = Math.round(((total - rank) / total) * 100);
-      cards.push({
-        kind: 'rank', lbl: 'Ranking ciudad', val: String(rank), unit: `/ ${total}`,
-        fillPct: ((total - rank) / total) * 100,
-        desc: [`más eficiente que el ${percentile}% de operadores comparables`],
-      });
-    }
-  }
-  _congRenderKpis(cards);
+  _congRenderKpis(_congBuildCompanyCards(accountId));
 
   _congRenderTable(_congAggByOwner(companyRows), _CONG_CAMION_COLS, 'km', row => {
     const sel = document.getElementById('cong-camion-sel');
@@ -517,8 +577,14 @@ function _congRenderViajeLevel(ownerId, viajeId, companyRows) {
 //   'stat' — valor + líneas de descripción (MECC, Km, Vehículos, Viajes)
 //   'bar'  — valor + barra de progreso 0→escala + línea de variación (IEV)
 //   'rank' — valor "N / total" + barra de posición + descripción (Ranking)
-function _congRenderKpis(cards) {
-  const container = document.getElementById('cong-kpi-row');
+// `containerId` opcional (default 'cong-kpi-row', usado por Camión→
+// Congestión vía #cong-kpi-row). La integración de Empresa (Global sub-tab,
+// ver bloque _congCompanyCardsUpdate() más abajo) reusa esta MISMA función
+// pasando 'cmp-cong-kpi-row-a'/'cmp-cong-kpi-row-b' como containerId — no
+// hay un sistema de tarjetas separado para esa superficie, ambas comparten
+// _congBuildCompanyCards() + _congRenderKpis().
+function _congRenderKpis(cards, containerId) {
+  const container = document.getElementById(containerId || 'cong-kpi-row');
   if (!container) return;
   container.innerHTML = '';
   cards.forEach(c => {
@@ -618,4 +684,73 @@ function _congRenderDetailCard(title, rows) {
       ${rows.map(([lbl, val]) => `<div><span class="cong-detalle-lbl">${lbl}</span><span class="cong-detalle-val">${val}</span></div>`).join('')}
     </div>
   `;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONGESTIÓN — KPIs de empresa SIN DEPENDENCIA TEMPORAL, integrados en el
+// sub-tab Global de Empresa (Phase 4, reworked twice — see design.md "Design
+// Revision — Phase 4 pivot" and the later revision reworking this section).
+// NOT a dedicated "Congestión" sub-tab: tried first and rejected by the user
+// after seeing it in-browser (an extra panel duplicating navigation for data
+// with no drill-down of its own). A velocímetro grid (gauge grid, mirroring
+// comparativas.js's Ruido KPI_LIST/_kpiRenderGrid/_kpiSvgGauge) was tried
+// SECOND and also rejected by the user: forcing every congestion metric into
+// the same gauge visual doesn't fit metrics that are naturally a comparison
+// (IEV vs city average) or a position (ranking), not a standalone dial.
+//
+// Current approach: REUSE the multi-format card system Camión→Congestión's
+// own Empresa-level drill-down already built and proved
+// (_congBuildCompanyCards → _congRenderKpis, ~line 454 of this file) — 'stat'
+// for plain values (MECC, Distancia, Vehículos, % vías rápidas, % hora
+// punta), 'bar' for IEV (value vs city-wide iev_global), 'rank' for the
+// city ranking. Same card kinds, same .cong-kpi/.cong-kpi-row CSS as Camión's
+// own #cong-kpi-row — just two new sibling containers
+// (#cmp-cong-kpi-row-a/#cmp-cong-kpi-row-b) so _congRenderKpis' existing
+// containerId parameter can target them directly. No gauge SVG, no
+// CONG_KPI_LIST, no percentile-from-referencia.csv positioning — that whole
+// apparatus existed only to feed the (now removed) gauge widget.
+//
+// Wired from _kpiUpdateGrids() (comparativas.js) via a guarded fire-and-forget
+// call to _congCompanyCardsUpdate(), so it updates whenever the Ruido grids
+// do, without blocking them.
+//
+// Any comparativa mode dependent on a time period (month, week, etc.) would
+// belong in the Temporal sub-tab instead — but per the frozen
+// congestion-data-contract, NEITHER congestion/empresas.csv NOR
+// congestion/vehiculos.csv carries any period/month column, so there is
+// currently no period-dependent congestion metric to integrate there. This
+// is a documented fact about the current data contract, not a gap left
+// unbuilt — Temporal integration becomes applicable only if/when the
+// contract adds a period-dependent congestion field.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Actualizar las dos filas de tarjetas cuando cambia la selección de
+// empresas — llamado desde _kpiUpdateGrids() (comparativas.js), mismo
+// trigger que las grillas de Ruido (#cmp-emp-a/#cmp-emp-b onchange).
+// congEnsureLoaded() es idempotente (short-circuita tras la primera carga),
+// así que esta llamada es segura en cada cambio de selección sin refetch
+// redundante. Sin fila en _congEmpData para el account_id elegido →
+// _congBuildCompanyCards devuelve [] → _congRenderKpis([]) limpia el
+// container (mismo comportamiento que el nivel Viaje de Camión→Congestión,
+// línea ~531) — degradación graciosa, sin throw. ───────────────────────────
+async function _congCompanyCardsUpdate() {
+  const empA = document.getElementById('cmp-emp-a')?.value;
+  const empB = document.getElementById('cmp-emp-b')?.value;
+
+  const section = document.getElementById('cmp-cong-kpi-section');
+  if (!section) return;
+
+  if (!empA && !empB) { section.style.display = 'none'; return; }
+
+  section.style.display = 'block';
+
+  const headA = document.getElementById('cmp-cong-kpi-head-a');
+  const headB = document.getElementById('cmp-cong-kpi-head-b');
+  if (headA) headA.textContent = empA ? `Congestión — ${empA}` : 'Congestión — Empresa A';
+  if (headB) headB.textContent = empB ? `Congestión — ${empB}` : 'Congestión — Empresa B';
+
+  await congEnsureLoaded();
+
+  if (empA) _congRenderKpis(_congBuildCompanyCards(empA), 'cmp-cong-kpi-row-a');
+  if (empB) _congRenderKpis(_congBuildCompanyCards(empB), 'cmp-cong-kpi-row-b');
 }

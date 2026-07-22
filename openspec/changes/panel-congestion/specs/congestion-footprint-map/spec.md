@@ -1,8 +1,27 @@
 # Congestion Footprint Map Specification
 
+## Amendment (2026-07-22) — Empresa integration no longer mounts this map
+
+The original Purpose/requirements below describe this layer as shared between
+`congestion-empresa` and `congestion-camion`. That was accurate while
+`congestion-empresa` was a dedicated sub-tab with its own footprint map mount
+point (`cong-map-slot-empresa`). That sub-tab was reverted (see
+`congestion-empresa/spec.md`'s own amendment and `design.md`'s "Design
+Revision — Phase 4 pivot"): company-level congestion KPIs now live in the
+Empresa tab's Global sub-tab as a KPI gauge grid only, with **no footprint
+map** of their own. This layer is therefore, as of this amendment, mounted
+and consumed **only by `congestion-camion`** (`#cong-map-slot-camion`). The
+rendering functions (`congInitMap()`, `congRenderFootprint()`) and the
+relocation helper (`_congMountFootprintMap(slotId)`) remain genuinely
+unmodified and generic — a future Empresa-side surface could still reuse them
+via a second slot — but no such second mount point currently exists in the
+DOM. The requirements below are left as originally written (still literally
+true: the layer supports being opened "from Empresa or Camión" in principle,
+via the generic `slotId` parameter), except where explicitly called out.
+
 ## Purpose
 
-Shared Leaflet rendering of the road-network congestion footprint (`congestion/red_mecc.geojson`) reused, unmodified in rendering logic, by both `congestion-empresa` and `congestion-camion`. Renders LineString edges colored by congestion load, distinct from the H3-hexagon `h3overlay.js` pattern.
+Shared Leaflet rendering of the road-network congestion footprint (`congestion/red_mecc.geojson`), currently mounted only by `congestion-camion` (see Amendment above for why the original Empresa mount point was removed). Renders LineString edges colored by congestion load, distinct from the H3-hexagon `h3overlay.js` pattern.
 
 ## Requirements
 
@@ -29,13 +48,15 @@ The system MUST render at least one aggregate (non-hourly) view of the footprint
 
 ### Requirement: Shared, Unfiltered Network Geometry
 
-Because `congestion/red_mecc.geojson` carries no per-company join key, the system MUST render the same underlying network geometry regardless of whether the map is shown from the Empresa or Camión Congestión surface. "Company-scoped" framing (per the calling capability) refers to the surrounding KPI/table context, not a geometric filter of edges.
+Because `congestion/red_mecc.geojson` carries no per-company join key, the system MUST render the same underlying network geometry without any company-based filter of edges, regardless of which mount point (`slotId`) the layer is relocated into via `_congMountFootprintMap()`. "Company-scoped" framing (where it applies, per the calling capability) refers to the surrounding KPI/table context, not a geometric filter of edges.
 
-#### Scenario: Same edges shown from either surface
+#### Scenario: Edges are never filtered by company
 
 - GIVEN the same `congestion/red_mecc.geojson` payload is loaded
-- WHEN the footprint map is opened from Empresa→Congestión and, separately, from Camión→Congestión
-- THEN the same set of edges is drawn in both cases
+- WHEN the footprint map renders inside Camión→Congestión (the only mount
+  point that currently exists — see Amendment above)
+- THEN the full set of network edges is drawn, with no company/account_id
+  filter applied to the geometry
 
 ### Requirement: Graceful Degradation When Geojson Is Absent
 
